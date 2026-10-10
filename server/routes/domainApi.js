@@ -50,6 +50,9 @@ router.delete('/leads/:id', (req, res) => { try { domain.leadsDelete(req.auth.wo
 router.post('/leads/:id/score', (req, res) => { try { ok(res, domain.leadsScore(req.auth.workspaceId, Number(req.params.id))); } catch (e) { fail(res, e); } });
 router.post('/leads/:id/qualify', (req, res) => { try { ok(res, { lead: domain.leadsQualify(req.auth.workspaceId, Number(req.params.id), req.body && req.body.note) }); } catch (e) { fail(res, e); } });
 router.post('/leads/:id/research', async (req, res) => { try { ok(res, await domain.leadsResearch(req.auth.workspaceId, Number(req.params.id))); } catch (e) { fail(res, e, 500); } });
+router.post('/leads/:id/facts', (req, res) => { try { ok(res, { fact: domain.leadsAddFact(req.auth.workspaceId, Number(req.params.id), req.body || {}) }); } catch (e) { fail(res, e); } });
+router.get('/leads/:id/timeline', (req, res) => { try { ok(res, { timeline: domain.leadsTimeline(req.auth.workspaceId, Number(req.params.id), { limit: req.query.limit }) }); } catch (e) { fail(res, e); } });
+router.get('/leads/:id/prospect-score', (req, res) => { try { ok(res, domain.prospectScore(req.auth.workspaceId, Number(req.params.id))); } catch (e) { fail(res, e); } });
 router.get('/leads/:id/duplicates', (req, res) => { try { ok(res, { duplicates: domain.leadsDuplicates(req.auth.workspaceId, Number(req.params.id)) }); } catch (e) { fail(res, e); } });
 router.post('/leads/merge', (req, res) => { try { ok(res, { lead: domain.leadsMerge(req.auth.workspaceId, req.body.keepId, req.body.dropIds) }); } catch (e) { fail(res, e); } });
 router.post('/leads/import', (req, res) => { try { ok(res, domain.leadsImportCsv(req.auth.workspaceId, req.body.text, req.body)); } catch (e) { fail(res, e); } });
@@ -65,7 +68,46 @@ router.post('/discovery/run', requireRole('owner', 'admin', 'member'), async (re
 
 // Design
 router.get('/design/pending', (req, res) => { try { ok(res, domain.designPending(req.auth.workspaceId)); } catch (e) { fail(res, e); } });
-router.get('/design', (req, res) => { try { ok(res, { jobs: domain.designList(req.auth.workspaceId, req.query) }); } catch (e) { fail(res, e); } });
+router.get('/design', (req, res) => { try { ok(res, domain.designList(req.auth.workspaceId, req.query)); } catch (e) { fail(res, e); } });
+router.get('/design/default-instructions', (req, res) => { try { ok(res, domain.designDefaultInstructions()); } catch (e) { fail(res, e); } });
+
+// Design — inbound email redesign requests (also mounted at /email-redesign)
+const ER = ['/design/email-redesign', '/email-redesign'];
+const erPaths = (suffix = '') => ER.map((p) => `${p}${suffix}`);
+router.get(erPaths(), (req, res) => {
+  try {
+    const args = { ...req.query };
+    if (args.pendingOnly != null) args.pendingOnly = args.pendingOnly === '1' || args.pendingOnly === 'true';
+    if (args.includeAll != null) args.includeAll = args.includeAll === '1' || args.includeAll === 'true';
+    ok(res, domain.emailRedesignList(req.auth.workspaceId, args));
+  } catch (e) { fail(res, e); }
+});
+router.post(erPaths('/ingest'), (req, res) => { try { ok(res, domain.emailRedesignIngest(req.auth.workspaceId, req.body || {})); } catch (e) { fail(res, e); } });
+router.post(erPaths('/scan'), (req, res) => { try { ok(res, domain.emailRedesignScan(req.auth.workspaceId)); } catch (e) { fail(res, e); } });
+router.get(erPaths('/:id'), (req, res) => { try { ok(res, domain.emailRedesignGet(req.auth.workspaceId, Number(req.params.id))); } catch (e) { fail(res, e); } });
+router.post(erPaths('/:id/submit'), async (req, res) => { try { ok(res, await domain.emailRedesignSubmit(req.auth.workspaceId, Number(req.params.id), req.body || {})); } catch (e) { fail(res, e, 500); } });
+router.post(erPaths('/:id/dismiss'), (req, res) => { try { ok(res, domain.emailRedesignDismiss(req.auth.workspaceId, Number(req.params.id))); } catch (e) { fail(res, e); } });
+
+// Design — learning playbook (also mounted at /design-learning)
+const DL = ['/design/learning', '/design-learning'];
+const dlPaths = (suffix = '') => DL.map((p) => `${p}${suffix}`);
+router.get(dlPaths('/status'), (req, res) => { try { ok(res, domain.learningStatus(req.auth.workspaceId)); } catch (e) { fail(res, e); } });
+router.get(dlPaths('/playbook'), (req, res) => { try { ok(res, domain.learningPlaybook(req.auth.workspaceId)); } catch (e) { fail(res, e); } });
+router.get(dlPaths('/events'), (req, res) => { try { ok(res, domain.learningEvents(req.auth.workspaceId, req.query)); } catch (e) { fail(res, e); } });
+router.post(dlPaths('/clear'), requireRole('owner', 'admin'), (req, res) => { try { ok(res, domain.learningClear(req.auth.workspaceId, (req.body && req.body.what) || 'all')); } catch (e) { fail(res, e); } });
+router.post(dlPaths('/distill'), async (req, res) => { try { ok(res, await domain.learningDistill(req.auth.workspaceId, req.body || {})); } catch (e) { fail(res, e, 500); } });
+
+router.post('/design/render', (req, res) => { try { ok(res, domain.designRenderHtml(req.auth.workspaceId, req.body || {})); } catch (e) { fail(res, e); } });
+router.get('/design/:id/answers', (req, res) => { try { ok(res, domain.designListAnswers(req.auth.workspaceId, Number(req.params.id))); } catch (e) { fail(res, e); } });
+router.post('/design/:id/contact', (req, res) => { try { ok(res, { job: domain.designSetContact(req.auth.workspaceId, Number(req.params.id), req.body && req.body.email) }); } catch (e) { fail(res, e); } });
+router.post('/design/:id/email-questions', (req, res) => { try { ok(res, domain.designEmailQuestions(req.auth.workspaceId, Number(req.params.id))); } catch (e) { fail(res, e); } });
+router.post('/design/:id/email-delivery', (req, res) => { try { ok(res, domain.designEmailDelivery(req.auth.workspaceId, Number(req.params.id))); } catch (e) { fail(res, e); } });
+router.post('/design/:id/reply', (req, res) => { try { ok(res, { job: domain.designRecordReply(req.auth.workspaceId, Number(req.params.id), req.body && req.body.reply, req.body && req.body.fromEmail) }); } catch (e) { fail(res, e); } });
+router.put('/design/:id/website', (req, res) => { try { ok(res, { job: domain.designSaveWebsite(req.auth.workspaceId, Number(req.params.id), req.body && req.body.pages, req.body && req.body.theme) }); } catch (e) { fail(res, e); } });
+router.post('/design/:id/render', (req, res) => { try { ok(res, domain.designRenderHtml(req.auth.workspaceId, { ...(req.body || {}), id: Number(req.params.id) })); } catch (e) { fail(res, e); } });
+router.get('/design/:id/asset-base', async (req, res) => { try { ok(res, await domain.designAssetBase(req.auth.workspaceId, Number(req.params.id))); } catch (e) { fail(res, e, 500); } });
+router.post('/design/:id/remove-delivery', (req, res) => { try { ok(res, { job: domain.designRemoveDelivery(req.auth.workspaceId, Number(req.params.id), req.body && req.body.path) }); } catch (e) { fail(res, e); } });
+router.delete('/design/:id/delivery', (req, res) => { try { ok(res, { job: domain.designRemoveDelivery(req.auth.workspaceId, Number(req.params.id), (req.body && req.body.path) || req.query.path) }); } catch (e) { fail(res, e); } });
 router.get('/design/:id', (req, res) => { try { ok(res, { job: domain.designGet(req.auth.workspaceId, Number(req.params.id)) }); } catch (e) { fail(res, e); } });
 router.post('/design', (req, res) => { try { ok(res, { job: domain.designCreate(req.auth.workspaceId, req.body || {}) }); } catch (e) { fail(res, e); } });
 router.patch('/design/:id', (req, res) => { try { ok(res, { job: domain.designUpdate(req.auth.workspaceId, Number(req.params.id), req.body || {}) }); } catch (e) { fail(res, e); } });
@@ -88,6 +130,11 @@ router.post('/design/:id/generate-images', async (req, res) => { try { ok(res, a
 
 // Websites
 router.get('/websites', (req, res) => { try { ok(res, domain.sitesList(req.auth.workspaceId, req.query)); } catch (e) { fail(res, e); } });
+router.get('/websites/by-lead/:leadId', (req, res) => { try { ok(res, domain.sitesForLead(req.auth.workspaceId, Number(req.params.leadId))); } catch (e) { fail(res, e); } });
+router.post('/websites/render', (req, res) => { try { ok(res, domain.sitesRenderHtml(req.auth.workspaceId, null, req.body || {})); } catch (e) { fail(res, e); } });
+router.put('/websites/:id', (req, res) => { try { ok(res, domain.sitesSave(req.auth.workspaceId, Number(req.params.id), req.body || {})); } catch (e) { fail(res, e); } });
+router.post('/websites/:id/render', (req, res) => { try { ok(res, domain.sitesRenderHtml(req.auth.workspaceId, Number(req.params.id), req.body || {})); } catch (e) { fail(res, e); } });
+router.post('/websites/:id/preview', async (req, res) => { try { ok(res, await domain.sitesPreview(req.auth.workspaceId, Number(req.params.id), req.body || {})); } catch (e) { fail(res, e, 500); } });
 router.get('/websites/:id', (req, res) => { try { ok(res, { site: domain.sitesGet(req.auth.workspaceId, Number(req.params.id)) }); } catch (e) { fail(res, e); } });
 router.post('/websites/generate', async (req, res) => { try { ok(res, await domain.sitesGenerate(req.auth.workspaceId, Number(req.body.leadId), req.body || {})); } catch (e) { fail(res, e, 500); } });
 router.post('/websites/:id/qa', async (req, res) => { try { ok(res, await domain.sitesQa(req.auth.workspaceId, Number(req.params.id))); } catch (e) { fail(res, e, 500); } });
@@ -112,7 +159,8 @@ router.delete('/suppression/:id', (req, res) => { try { ok(res, domain.suppressi
 router.get('/pipeline', (req, res) => { try { ok(res, domain.pipelineBoard(req.auth.workspaceId, req.query)); } catch (e) { fail(res, e); } });
 router.get('/intent/:leadId', (req, res) => { try { ok(res, domain.intentGet(req.auth.workspaceId, Number(req.params.leadId))); } catch (e) { fail(res, e); } });
 router.post('/intent/:leadId', (req, res) => { try { ok(res, domain.intentRecord(req.auth.workspaceId, Number(req.params.leadId), req.body.event, req.body.note)); } catch (e) { fail(res, e); } });
-router.post('/email/compose', (req, res) => { try { ok(res, domain.emailCompose(req.auth.workspaceId, req.body.leadId, req.body.templateId)); } catch (e) { fail(res, e); } });
+router.post('/email/compose', (req, res) => { try { ok(res, domain.emailCompose(req.auth.workspaceId, req.body.leadId, req.body.templateId, { queue: !!req.body.queue })); } catch (e) { fail(res, e); } });
+router.post('/email/send', async (req, res) => { try { ok(res, await domain.emailSend(req.auth.workspaceId, Number(req.body && req.body.messageId))); } catch (e) { fail(res, e, e.code === 'SEND_FAILED' ? 502 : 400); } });
 
 // Settings (workspace SQLite — same keys as desktop)
 router.get('/settings', (req, res) => { try { ok(res, { settings: domain.settingsGetAll(req.auth.workspaceId) }); } catch (e) { fail(res, e); } });
@@ -121,6 +169,8 @@ router.put('/settings/secret', requireRole('owner', 'admin'), (req, res) => { tr
 router.post('/settings/automation', requireRole('owner', 'admin'), (req, res) => { try { ok(res, domain.automationSet(req.auth.workspaceId, !!(req.body && req.body.paused))); } catch (e) { fail(res, e); } });
 router.get('/prompts', (req, res) => { try { ok(res, { prompts: domain.promptsList(req.auth.workspaceId) }); } catch (e) { fail(res, e); } });
 router.put('/prompts/:key', requireRole('owner', 'admin'), (req, res) => { try { ok(res, domain.promptsSave(req.auth.workspaceId, req.params.key, req.body.body)); } catch (e) { fail(res, e); } });
+router.post('/prompts/:key/reset', requireRole('owner', 'admin'), (req, res) => { try { ok(res, domain.promptsReset(req.auth.workspaceId, req.params.key)); } catch (e) { fail(res, e); } });
+router.get('/activity', (req, res) => { try { ok(res, domain.activityRecent(req.auth.workspaceId, req.query)); } catch (e) { fail(res, e); } });
 router.get('/ai/usage', (req, res) => { try { ok(res, domain.aiUsage(req.auth.workspaceId, Number(req.query.days) || 30)); } catch (e) { fail(res, e); } });
 router.get('/ai/status', (req, res) => { try { ok(res, domain.aiStatus(req.auth.workspaceId)); } catch (e) { fail(res, e); } });
 

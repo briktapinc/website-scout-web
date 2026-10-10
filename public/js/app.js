@@ -338,9 +338,19 @@ async function pagePipeline() {
     </div>`;
 }
 
+function asJobList(data) {
+  if (!data) return [];
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data.jobs)) return data.jobs;
+  if (data.jobs && Array.isArray(data.jobs.jobs)) return data.jobs.jobs;
+  if (Array.isArray(data.rows)) return data.rows;
+  return [];
+}
+
 async function pageDesign() {
   const pending = await api.designPending();
   const list = await api.designList();
+  const jobs = asJobList(list.data);
   view.innerHTML = `
     <h2 class="page-title">Design</h2>
     <p class="page-sub">${pending.data.counts.waiting_on_agent} waiting on agent · ${pending.data.counts.questions_pending} questions pending</p>
@@ -363,7 +373,7 @@ async function pageDesign() {
       <div class="panel-b">
         <table><thead><tr><th>Title</th><th>Type</th><th>Status</th><th>Updated</th></tr></thead>
         <tbody>
-          ${(list.data.jobs || []).map((j) => `<tr><td>${esc(j.title)}</td><td>${esc(j.type)}</td><td>${esc(j.status)}</td><td>${esc(j.updated_at)}</td></tr>`).join('') || '<tr><td colspan="4">No design jobs</td></tr>'}
+          ${jobs.map((j) => `<tr><td>${esc(j.title)}</td><td>${esc(j.type)}</td><td>${esc(j.status)}</td><td>${esc(j.updated_at)}</td></tr>`).join('') || '<tr><td colspan="4">No design jobs</td></tr>'}
         </tbody></table>
       </div>
     </div>`;
