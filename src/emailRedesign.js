@@ -350,8 +350,118 @@ function dismissEmailRedesign(db, id) {
   return publicRow(db.prepare('SELECT * FROM design_email_redesigns WHERE id = ?').get(row.id));
 }
 
+/** Strip common quoted reply / signature noise before AI + fallbacks. */
+function stripQuotedEmail(text) {
+  let t = String(text || '').replace(/\r\n/g, '\n');
+  t = t.split(/\nOn .+wrote:\n/)[0];
+  t = t.split(/\n-{2,}\s*Original Message\s*-{2,}/i)[0];
+  t = t.split(/\nFrom:\s+.+\nSent:\s+/i)[0];
+  t = t.replace(/^\s*>.*$/gm, '');
+  t = t.replace(/\n{3,}/g, '\n\n').trim();
+  return t.slice(0, 8000);
+}
+
+/**
+ * Use OpenAI (workspace ai.api_key) to turn a client email into agent instructions.
+ * Returns { instructions, requestKind, summary, usedAi }.
+ */
+async function interpretClientEmail(db, {
+  subject = '',
+  body = '',
+  fromEmail = '',
+  jobTitle = '',
+  jobId = null,
+  requestKindHint = null,
+} = {}) {
+  const cleaned = stripQuotedEmail(body) || String(body || '').trim();
+  const fallbackKind = detectRequestKind(subject, cleaned, requestKindHint);
+  const fallbackInstructions = cleaned.slice(0, 4000);
+  if (!fallbackInstructions) {
+    throw fail('NO_INSTRUCTIONS', 'Email body is empty.');
+  }
+
+  const ai = require('./ai');
+  try {
+    if (typeof ai.setDb === 'function') ai.setDb(db);
+  } catch { /* ignore */ }
+
+  if (!ai.aiConfigured || !ai.aiConfigured()) {
+    return {
+      instructions: fallbackInstructions,
+      requestKind: fallbackKind,
+      summary: '',
+      usedAi: false,
+      reason: 'ai_not_configured',
+    };
+  }
+
+  const system = `You turn client email replies into clear design-agent instructions for Website Scout.
+Return ONLY valid JSON (no markdown) with keys:
+- request_kind: "redesign" (major visual/IA change) or "improvements" (polish/copy/fixes)
+- instructions: imperative bullet list the design agent should follow (plain text, no greeting)
+- summary: one short sentence of what the client wants
+
+Rules:
+- Ignore quoted history, signatures, legal footers, and unsubscribe lines.
+- Keep only actionable design/content requests.
+- Do not invent business facts (phone, address, hours, reviews).
+- Preserve specific client wording for copy/color/layout asks.
+- If the email only answers questions with no change request, still write instructions summarizing what they said for the agent.`;
+
+  const user = [
+    jobId != null ? `Design job: #${jobId}${jobTitle ? ` — ${jobTitle}` : ''}` : '',
+    fromEmail ? `From: ${fromEmail}` : '',
+    `Subject: ${subject || '(none)'}`,
+    requestKindHint ? `Hint: ${requestKindHint}` : '',
+    '',
+    'Client email:',
+    cleaned.slice(0, 6000),
+  ].filter(Boolean).join('\n');
+
+  try {
+    const res = await ai.chat({
+      task: 'editor',
+      maxTokens: 900,
+      note: jobId != null ? `email-interpret job #${jobId}` : 'email-interpret',
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+    });
+    const raw = String(res.text || '').trim();
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
+    const kind = detectRequestKind(subject, cleaned, parsed.request_kind || requestKindHint);
+    const instructions = String(parsed.instructions || '').trim().slice(0, 6000);
+    if (!instructions) {
+      return {
+        instructions: fallbackInstructions,
+        requestKind: kind,
+        summary: String(parsed.summary || '').trim().slice(0, 300),
+        usedAi: true,
+        reason: 'empty_ai_instructions',
+      };
+    }
+    return {
+      instructions,
+      requestKind: kind,
+      summary: String(parsed.summary || '').trim().slice(0, 300),
+      usedAi: true,
+    };
+  } catch (e) {
+    return {
+      instructions: fallbackInstructions,
+      requestKind: fallbackKind,
+      summary: '',
+      usedAi: false,
+      reason: e.code || e.message || 'ai_failed',
+    };
+  }
+}
+
 /**
  * Queue redesign or improvements via the shared agent-change path using the email body.
+ * By default, OpenAI interprets the client email into clean agent instructions.
  */
 async function submitEmailRedesign(db, id, opts = {}) {
   ensureTables(db);
@@ -367,10 +477,26 @@ async function submitEmailRedesign(db, id, opts = {}) {
   if (job.type !== 'website') throw fail('NOT_A_WEBSITE', 'Change requests apply to website jobs.');
   if (!job.deliverable) throw fail('NO_DELIVERY', 'Deliver a website before requesting changes.');
 
-  const instructions = String(opts.instructions != null ? opts.instructions : row.body).trim();
+  let instructions = opts.instructions != null ? String(opts.instructions).trim() : '';
+  let kind = detectRequestKind(row.subject, row.body, opts.requestKind != null ? opts.requestKind : row.request_kind);
+  let interpretMeta = { usedAi: false };
+
+  const useAi = opts.skipAiInterpret !== true && opts.instructions == null;
+  if (useAi) {
+    interpretMeta = await interpretClientEmail(db, {
+      subject: row.subject,
+      body: row.body,
+      fromEmail: row.from_email,
+      jobTitle: job.title,
+      jobId,
+      requestKindHint: kind,
+    });
+    instructions = interpretMeta.instructions;
+    kind = interpretMeta.requestKind || kind;
+  }
+  if (!instructions) instructions = String(row.body || '').trim();
   if (!instructions) throw fail('NO_INSTRUCTIONS', 'Instructions are empty.');
 
-  const kind = detectRequestKind(row.subject, row.body, opts.requestKind != null ? opts.requestKind : row.request_kind);
   const design = require('./designJobs');
   const queueOpts = {
     instructions,
@@ -391,7 +517,9 @@ async function submitEmailRedesign(db, id, opts = {}) {
   try {
     db.prepare('INSERT INTO activity_log (area, message) VALUES (?, ?)').run(
       'design',
-      `Email ${kind} request #${row.id} submitted → job #${jobId} waiting_on_agent.`
+      `Email ${kind} request #${row.id} submitted → job #${jobId} waiting_on_agent`
+      + `${interpretMeta.usedAi ? ' (OpenAI instructions)' : ''}`
+      + `${interpretMeta.summary ? `: ${String(interpretMeta.summary).slice(0, 120)}` : ''}.`
     );
   } catch { /* ignore */ }
 
@@ -412,6 +540,8 @@ async function submitEmailRedesign(db, id, opts = {}) {
   return {
     request: submitted,
     job: updated,
+    instructions,
+    interpreted: interpretMeta,
   };
 }
 
@@ -488,6 +618,8 @@ module.exports = {
   detectRequestKind,
   extractJobId,
   jobSubjectTag,
+  stripQuotedEmail,
+  interpretClientEmail,
   ingestInboundEmail,
   listEmailRedesigns,
   getEmailRedesign,

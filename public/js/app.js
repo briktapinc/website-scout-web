@@ -1432,7 +1432,7 @@ async function pageDesign(param) {
           <button class="btn small" data-act="imap">Poll IMAP inbox</button>
           <button class="btn small" data-act="scan">Scan drop folder</button>
         </div></div>
-      <p class="hint">Client replies with <code>[Job #N]</code> in the subject are matched automatically when IMAP is enabled (Settings → Email). ${er && er.data.dropDir ? `Drop folder: <span class="mono">${esc(er.data.dropDir)}</span>` : ''}</p>
+      <p class="hint">Client replies with <code>[Job #N]</code> in the subject are matched when IMAP is on. OpenAI turns the email into agent instructions before the job is queued (needs AI key in Settings). ${er && er.data.dropDir ? `Drop folder: <span class="mono">${esc(er.data.dropDir)}</span>` : ''}</p>
       <div id="dj-er">${ers.map((r) => erRowHtml(r, true)).join('') || '<p class="hint">No pending email requests.</p>'}</div>
     </div>
     <div class="card"><details><summary>Design learning</summary><div id="dj-learning" style="margin-top:8px"></div></details></div>`;
@@ -2416,7 +2416,7 @@ async function pageSettings() {
         </section>
 
         <section class="card" id="sec-smtp"><h2>Email (SMTP + IMAP)</h2>
-          <p class="hint">SMTP sends design/outreach mail. IMAP polls the same inbox for client replies. Outbound subjects include <code>[Job #N]</code> so replies are matched automatically, answers are recorded, and change requests are queued for the agent.</p>
+          <p class="hint">SMTP sends design/outreach mail. IMAP polls for client replies with <code>[Job #N]</code>. OpenAI (Settings → AI) reads each reply and writes clean instructions onto the design job before it is queued for the agent.</p>
           <h3 style="margin:12px 0 8px;font-size:15px">SMTP (outbound)</h3>
           <div class="row">${f('smtp.host', 'Host', { placeholder: 'mail.example.com' })}${f('smtp.port', 'Port', { type: 'number', min: 1 })}${f('smtp.secure', 'Use TLS (port 465)', { options: [['0', 'No (STARTTLS / plain)'], ['1', 'Yes']] })}</div>
           <div class="row">${f('smtp.user', 'Username')}${secret('smtp.pass', 'Password')}</div>
