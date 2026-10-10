@@ -44,18 +44,48 @@ async function workspaceHasSubscription(workspaceId) {
 }
 
 async function ensureCustomer(user) {
-  if (user.stripe_customer_id) return user.stripe_customer_id;
+  // Re-read — parallel checkouts may have filled stripe_customer_id already.
+  const fresh = await getUserBilling(user.id);
+  if (fresh && fresh.stripe_customer_id) return fresh.stripe_customer_id;
+
   const stripe = await getStripe();
-  const customer = await stripe.customers.create({
-    email: user.email,
-    name: user.name || undefined,
-    metadata: { user_id: String(user.id) },
-  });
+  let existingId = null;
+
+  try {
+    const found = await stripe.customers.search({
+      query: `metadata['user_id']:'${Number(user.id)}'`,
+      limit: 1,
+    });
+    if (found.data && found.data[0]) existingId = found.data[0].id;
+  } catch { /* Search API may be unavailable on some accounts */ }
+
+  if (!existingId && user.email) {
+    try {
+      const listed = await stripe.customers.list({ email: user.email, limit: 10 });
+      const match = (listed.data || []).find(
+        (c) => c.metadata && String(c.metadata.user_id) === String(user.id)
+      ) || (listed.data && listed.data[0]);
+      if (match) existingId = match.id;
+    } catch { /* ignore */ }
+  }
+
+  if (!existingId) {
+    const customer = await stripe.customers.create({
+      email: user.email,
+      name: user.name || undefined,
+      metadata: { user_id: String(user.id) },
+    });
+    existingId = customer.id;
+  }
+
+  // Only win the write if still empty (another request may have stored a customer).
   await query(
-    'UPDATE users SET stripe_customer_id = :cid WHERE id = :id',
-    { cid: customer.id, id: user.id }
+    `UPDATE users SET stripe_customer_id = :cid
+     WHERE id = :id AND (stripe_customer_id IS NULL OR stripe_customer_id = '')`,
+    { cid: existingId, id: user.id }
   );
-  return customer.id;
+  const again = await getUserBilling(user.id);
+  return (again && again.stripe_customer_id) || existingId;
 }
 
 async function createCheckoutSession(userId) {
@@ -195,24 +225,36 @@ async function recordPaymentFromInvoice(invoice) {
     ? invoice.charge
     : (invoice.charge && invoice.charge.id) || null;
 
-  const result = await query(
-    `INSERT INTO payments
-      (user_id, stripe_invoice_id, stripe_payment_intent_id, stripe_charge_id,
-       amount_cents, currency, status, description)
-     VALUES
-      (:userId, :invoiceId, :pi, :charge, :amount, :currency, :status, :description)`,
-    {
-      userId,
-      invoiceId: invoice.id,
-      pi,
-      charge,
-      amount,
-      currency: String(invoice.currency || 'usd').toLowerCase(),
-      status: invoice.status === 'paid' ? 'succeeded' : (invoice.status || 'open'),
-      description: invoice.description || `Invoice ${invoice.number || invoice.id}`,
+  try {
+    const result = await query(
+      `INSERT INTO payments
+        (user_id, stripe_invoice_id, stripe_payment_intent_id, stripe_charge_id,
+         amount_cents, currency, status, description)
+       VALUES
+        (:userId, :invoiceId, :pi, :charge, :amount, :currency, :status, :description)`,
+      {
+        userId,
+        invoiceId: invoice.id,
+        pi,
+        charge,
+        amount,
+        currency: String(invoice.currency || 'usd').toLowerCase(),
+        status: invoice.status === 'paid' ? 'succeeded' : (invoice.status || 'open'),
+        description: invoice.description || `Invoice ${invoice.number || invoice.id}`,
+      }
+    );
+    return result.insertId || null;
+  } catch (e) {
+    // Concurrent invoice.paid webhooks — unique stripe_invoice_id.
+    if (e.code === 'ER_DUP_ENTRY' || /unique|duplicate/i.test(String(e.message || ''))) {
+      const rows = await query(
+        'SELECT id FROM payments WHERE stripe_invoice_id = :iid LIMIT 1',
+        { iid: invoice.id }
+      );
+      return rows[0] ? rows[0].id : null;
     }
-  );
-  return result.insertId || null;
+    throw e;
+  }
 }
 
 async function recordRefundFromCharge(charge, refund) {
@@ -243,28 +285,41 @@ async function recordRefundFromCharge(charge, refund) {
     if (rows[0]) userId = rows[0].id;
   }
 
-  const result = await query(
-    `INSERT INTO refunds
-      (payment_id, user_id, stripe_refund_id, amount_cents, currency, status, reason)
-     VALUES
-      (:paymentId, :userId, :refundId, :amount, :currency, :status, :reason)`,
-    {
-      paymentId,
-      userId,
-      refundId: refund.id,
-      amount: Number(refund.amount) || 0,
-      currency: String((charge && charge.currency) || refund.currency || 'usd').toLowerCase(),
-      status: refund.status || 'succeeded',
-      reason: refund.reason || '',
+  let insertId = null;
+  try {
+    const result = await query(
+      `INSERT INTO refunds
+        (payment_id, user_id, stripe_refund_id, amount_cents, currency, status, reason)
+       VALUES
+        (:paymentId, :userId, :refundId, :amount, :currency, :status, :reason)`,
+      {
+        paymentId,
+        userId,
+        refundId: refund.id,
+        amount: Number(refund.amount) || 0,
+        currency: String((charge && charge.currency) || refund.currency || 'usd').toLowerCase(),
+        status: refund.status || 'succeeded',
+        reason: refund.reason || '',
+      }
+    );
+    insertId = result.insertId || null;
+  } catch (e) {
+    if (e.code === 'ER_DUP_ENTRY' || /unique|duplicate/i.test(String(e.message || ''))) {
+      const rows = await query(
+        'SELECT id FROM refunds WHERE stripe_refund_id = :rid LIMIT 1',
+        { rid: refund.id }
+      );
+      return rows[0] ? rows[0].id : null;
     }
-  );
+    throw e;
+  }
   if (paymentId) {
     await query(
       "UPDATE payments SET status = 'refunded' WHERE id = :id AND status = 'succeeded'",
       { id: paymentId }
     );
   }
-  return result.insertId || null;
+  return insertId;
 }
 
 async function handleWebhookEvent(event) {

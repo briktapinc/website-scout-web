@@ -37,7 +37,14 @@ async function getPriceId() {
 }
 
 function appUrl() {
-  return String(process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+  const raw = String(process.env.APP_URL || '').trim();
+  if (!raw) {
+    if (process.env.NODE_ENV === 'production') {
+      throw Object.assign(new Error('APP_URL must be set in production'), { code: 'APP_URL_REQUIRED' });
+    }
+    return 'http://localhost:3000';
+  }
+  return raw.replace(/\/$/, '');
 }
 
 function integrationId(label = 'billing-checkout') {

@@ -1597,7 +1597,7 @@ async function pageDesignDetail(id) {
           </div>
           <details style="margin-top:10px"><summary>Record a client reply</summary>
             <div class="field"><label class="lbl">From email (optional)</label><input id="dd-rfrom" type="email" /></div>
-            <div class="field"><label class="lbl">Reply text</label><textarea id="dd-reply" placeholder="Paste the reply — answers are matched to open questions."></textarea></div>
+            <div class="field"><label class="lbl">Reply text</label><textarea id="dd-reply" placeholder="Paste the reply. For multiple questions use 1. … 2. … or Q12: …"></textarea></div>
             <button class="btn small primary" data-act="reply">Record reply</button>
           </details>
           <div id="dd-email-out" class="hint" style="margin-top:8px"></div>

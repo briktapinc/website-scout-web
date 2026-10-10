@@ -25,6 +25,20 @@ const billingRoutes = require('./server/routes/billing');
 const inviteRoutes = require('./server/routes/invites');
 
 const PORT = Number(process.env.PORT || 3000);
+const IS_PROD = process.env.NODE_ENV === 'production';
+
+if (IS_PROD) {
+  const secret = String(process.env.SESSION_SECRET || '');
+  if (!secret || secret === 'dev-change-me' || secret.length < 24) {
+    console.error('[boot] SESSION_SECRET must be set to a strong value (≥24 chars) in production');
+    process.exit(1);
+  }
+  if (!String(process.env.APP_URL || '').trim()) {
+    console.error('[boot] APP_URL must be set in production (e.g. https://bitpype.com)');
+    process.exit(1);
+  }
+}
+
 const app = express();
 
 app.set('trust proxy', 1);
@@ -56,7 +70,7 @@ const cookieSecure = (() => {
 
 app.use(session({
   name: 'scout.sid',
-  secret: process.env.SESSION_SECRET || 'dev-change-me',
+  secret: process.env.SESSION_SECRET || (IS_PROD ? '' : 'dev-change-me'),
   resave: false,
   saveUninitialized: false,
   store: new MySQLSessionStore(),

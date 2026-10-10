@@ -1115,6 +1115,49 @@ function emailDelivery(db, jobId) {
   };
 }
 
+/**
+ * Map a client reply onto open questions.
+ * Supports `Q12: …`, `1. …` / `1) …` (order of pending), or a single blob for one question.
+ */
+function parseQuestionAnswers(text, pending) {
+  const cleaned = String(text || '')
+    .replace(/\r\n/g, '\n')
+    .split(/\nOn .+wrote:\n/)[0]
+    .trim();
+  const out = new Map();
+  if (!pending.length || !cleaned) return out;
+
+  // Explicit Q{id}: answer blocks
+  for (const q of pending) {
+    const re = new RegExp(
+      `(?:^|\\n)\\s*Q\\s*${q.id}\\s*[:.)\\-]\\s*([\\s\\S]*?)(?=(?:\\n\\s*Q\\s*\\d+\\s*[:.)\\-])|$)`,
+      'i'
+    );
+    const m = cleaned.match(re);
+    if (m && m[1] && m[1].trim()) out.set(q.id, m[1].trim().slice(0, 4000));
+  }
+  if (out.size) return out;
+
+  // Numbered answers 1. / 1) / 1: mapped to pending order
+  const indices = [];
+  const splitRe = /(?:^|\n)\s*(\d+)\s*[).:\-]\s+/g;
+  let match;
+  while ((match = splitRe.exec(cleaned)) !== null) {
+    indices.push({ n: Number(match[1]), start: match.index + match[0].length, at: match.index });
+  }
+  if (indices.length >= 1) {
+    for (let i = 0; i < indices.length; i++) {
+      const end = i + 1 < indices.length ? indices[i + 1].at : cleaned.length;
+      const ans = cleaned.slice(indices[i].start, end).trim();
+      const order = indices[i].n - 1;
+      if (ans && order >= 0 && order < pending.length) {
+        out.set(pending[order].id, ans.slice(0, 4000));
+      }
+    }
+  }
+  return out;
+}
+
 function recordEmailReply(db, jobId, reply, fromEmail) {
   ensureTables(db);
   getRow(db, jobId);
@@ -1127,9 +1170,27 @@ function recordEmailReply(db, jobId, reply, fromEmail) {
   const stmt = db.prepare(
     `UPDATE design_questions SET answer = ?, from_email = ?, answered_at = datetime('now') WHERE id = ? AND job_id = ?`
   );
-  for (const q of pending) stmt.run(text, from, q.id, jobId);
+
+  let answered = 0;
+  if (pending.length === 1) {
+    stmt.run(text.slice(0, 4000), from, pending[0].id, jobId);
+    answered = 1;
+  } else {
+    const parsed = parseQuestionAnswers(text, pending);
+    if (parsed.size) {
+      for (const [qid, ans] of parsed.entries()) {
+        stmt.run(ans, from, qid, jobId);
+        answered += 1;
+      }
+    } else {
+      // Avoid copying the same blob onto every question — attach to the first only.
+      stmt.run(text.slice(0, 4000), from, pending[0].id, jobId);
+      answered = 1;
+    }
+  }
+
   refreshQuestionStatus(db, jobId);
-  logActivity(db, `Design job #${jobId} email reply recorded on ${pending.length} question(s).`);
+  logActivity(db, `Design job #${jobId} email reply recorded on ${answered} question(s).`);
   return publicJob(db, getRow(db, jobId));
 }
 
