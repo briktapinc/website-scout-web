@@ -152,6 +152,30 @@ function leadsDuplicates(workspaceId, id) {
     return leadEngine().findDuplicates(db, lead);
   });
 }
+function leadsAddFact(workspaceId, leadId, fact) {
+  return withDb(workspaceId, (db) => {
+    const id = Number(leadId);
+    if (!Number.isInteger(id) || id <= 0) throw new Error('leadId must be a positive integer.');
+    return leadEngine().addFact(db, id, fact || {});
+  });
+}
+function leadsTimeline(workspaceId, leadId, opts = {}) {
+  return withDb(workspaceId, (db) => outreach().getTimeline(db, Number(leadId), { limit: opts && opts.limit }));
+}
+/** Lead score + Hot/Qualified/Cold label from current thresholds (MCP prospect.score). */
+function prospectScore(workspaceId, leadId) {
+  return withDb(workspaceId, (db) => {
+    const id = Number(leadId);
+    const lead = db.prepare('SELECT id, business_name, score, qualified FROM leads WHERE id = ?').get(id);
+    if (!lead) throw new Error(`Lead ${id} not found.`);
+    const latest = db.prepare('SELECT score, breakdown, at FROM lead_scores WHERE lead_id = ? ORDER BY id DESC LIMIT 1').get(id) || null;
+    const q = parseInt(getSetting(db, 'score.threshold_qualified', ''), 10) || 50;
+    const h = parseInt(getSetting(db, 'score.threshold_hot', ''), 10) || 70;
+    const score = Number(lead.score) || 0;
+    const label = score >= h ? 'Hot' : (score >= q ? 'Qualified' : 'Cold');
+    return { leadId: id, score: lead.score, label, qualified: !!lead.qualified, latest };
+  });
+}
 async function leadsBulk(workspaceId, payload) {
   return withDb(workspaceId, async (db) => {
     const engine = leadEngine();
@@ -270,6 +294,172 @@ async function designAddImages(workspaceId, id, args) {
 async function designGenerateImages(workspaceId, id, args) {
   return withDb(workspaceId, (db) => designJobs().generateJobImages(db, id, args));
 }
+function designDefaultInstructions() {
+  return { website: designJobs().defaultWebsiteInstructions() };
+}
+function designListAnswers(workspaceId, id) {
+  return withDb(workspaceId, (db) => ({ id: Number(id), questions: designJobs().listAnswers(db, Number(id)) }));
+}
+function designSetContact(workspaceId, id, email) {
+  return withDb(workspaceId, (db) => designJobs().setContactEmail(db, Number(id), email));
+}
+function designEmailQuestions(workspaceId, id) {
+  return withDb(workspaceId, (db) => designJobs().emailQuestions(db, Number(id)));
+}
+function designEmailDelivery(workspaceId, id) {
+  return withDb(workspaceId, (db) => designJobs().emailDelivery(db, Number(id)));
+}
+function designRecordReply(workspaceId, id, reply, fromEmail) {
+  return withDb(workspaceId, (db) => designJobs().recordEmailReply(db, Number(id), reply, fromEmail));
+}
+function designSaveWebsite(workspaceId, id, pages, theme) {
+  return withDb(workspaceId, (db) => designJobs().saveWebsiteEdit(db, Number(id), pages, theme));
+}
+function designRemoveDelivery(workspaceId, id, itemPath) {
+  return withDb(workspaceId, (db) => designJobs().removeDeliveryItem(db, Number(id), itemPath));
+}
+async function designAssetBase(workspaceId, id) {
+  return withDb(workspaceId, (db) => designJobs().assetBaseUrl(db, Number(id)));
+}
+/** Render a design job's delivered website (or supplied pages/theme) to HTML — no file I/O. */
+function designRenderHtml(workspaceId, args = {}) {
+  return withDb(workspaceId, (db) => {
+    const engine = websiteEngine();
+    let pages = args.pages;
+    let theme = args.theme || {};
+    if (!Array.isArray(pages) || !pages.length) {
+      const job = designJobs().getJob(db, Number(args.id));
+      const payload = job.deliverable;
+      if (!payload || !Array.isArray(payload.pages)) {
+        throw Object.assign(new Error('No website delivery yet.'), { code: 'NO_DELIVERY' });
+      }
+      pages = payload.pages;
+      theme = payload.theme || {};
+    }
+    const opts = {
+      editable: !!args.editable,
+      pageSlug: args.pageSlug,
+      pageIndex: Number.isInteger(args.pageIndex) ? args.pageIndex : (args.pageIndex != null ? Number(args.pageIndex) : undefined),
+    };
+    const list = pages.map((p) => ({ slug: p.slug, title: p.title }));
+    if (opts.pageSlug != null || Number.isInteger(opts.pageIndex)) {
+      return { html: engine.renderPageAt(pages, theme, opts), pages: list };
+    }
+    return { html: engine.renderSite(pages, theme, opts), pages: list };
+  });
+}
+
+// ---------- Email redesign (inbound change requests) ----------
+const emailRedesign = () => require('../src/emailRedesign');
+
+function emailRedesignList(workspaceId, args = {}) {
+  return withDb(workspaceId, (db) => {
+    const er = emailRedesign();
+    er.ensureTables(db);
+    return { requests: er.listEmailRedesigns(db, args || {}), dropDir: er.resolveDropDir(db) };
+  });
+}
+function emailRedesignGet(workspaceId, id) {
+  return withDb(workspaceId, (db) => {
+    const er = emailRedesign();
+    er.ensureTables(db);
+    return { request: er.getEmailRedesign(db, Number(id)) };
+  });
+}
+function emailRedesignIngest(workspaceId, args = {}) {
+  return withDb(workspaceId, (db) => {
+    const er = emailRedesign();
+    er.ensureTables(db);
+    const designJobId = args.designJobId != null ? args.designJobId : (args.jobId != null ? args.jobId : args.id);
+    const result = er.ingestInboundEmail(db, {
+      fromEmail: args.fromEmail,
+      subject: args.subject,
+      body: args.body != null ? args.body : args.reply,
+      designJobId: designJobId != null && designJobId !== '' ? Number(designJobId) : undefined,
+      leadId: args.leadId != null && args.leadId !== '' ? Number(args.leadId) : undefined,
+      source: args.source || 'api',
+      force: args.force !== false,
+      requestKind: args.requestKind || args.request_kind,
+    });
+    if (result.skipped) {
+      return { skipped: true, reason: result.reason || 'not_a_redesign_request', error: 'Not detected as a redesign/improvements request.' };
+    }
+    return {
+      skipped: false,
+      request: result.request,
+      job: designJobId != null && designJobId !== '' ? designJobs().getJob(db, Number(designJobId)) : null,
+    };
+  });
+}
+async function emailRedesignSubmit(workspaceId, id, args = {}) {
+  return withDb(workspaceId, async (db) => {
+    const er = emailRedesign();
+    er.ensureTables(db);
+    return er.submitEmailRedesign(db, Number(id), {
+      designJobId: args.designJobId,
+      instructions: args.instructions,
+      requestKind: args.requestKind || args.request_kind,
+    });
+  });
+}
+function emailRedesignDismiss(workspaceId, id) {
+  return withDb(workspaceId, (db) => {
+    const er = emailRedesign();
+    er.ensureTables(db);
+    return { request: er.dismissEmailRedesign(db, Number(id)) };
+  });
+}
+function emailRedesignScan(workspaceId) {
+  return withDb(workspaceId, (db) => {
+    const er = emailRedesign();
+    er.ensureTables(db);
+    return er.scanDropFolder(db);
+  });
+}
+
+// ---------- Design learning ----------
+const designLearning = () => require('../src/designLearning');
+
+function learningStatus(workspaceId) {
+  return withDb(workspaceId, (db) => {
+    designLearning().ensureTables(db);
+    return designLearning().getStatus(db);
+  });
+}
+function learningPlaybook(workspaceId) {
+  return withDb(workspaceId, (db) => {
+    const dl = designLearning();
+    dl.ensureTables(db);
+    return { playbook: dl.getPlaybook(db), status: dl.getStatus(db) };
+  });
+}
+function learningEvents(workspaceId, args = {}) {
+  return withDb(workspaceId, (db) => {
+    const dl = designLearning();
+    dl.ensureTables(db);
+    const opts = {};
+    if (args.limit != null && args.limit !== '') opts.limit = Number(args.limit);
+    if (args.eventType) opts.eventType = String(args.eventType);
+    if (args.jobId != null && args.jobId !== '') opts.jobId = Number(args.jobId);
+    return { events: dl.listEvents(db, opts), status: dl.getStatus(db) };
+  });
+}
+function learningClear(workspaceId, what = 'all') {
+  return withDb(workspaceId, (db) => {
+    const dl = designLearning();
+    dl.ensureTables(db);
+    const w = String(what || 'all').toLowerCase();
+    if (w === 'playbook') return dl.clearPlaybook(db);
+    if (w === 'events') return dl.clearEvents(db);
+    return dl.clearAll(db);
+  });
+}
+async function learningDistill(workspaceId, args = {}) {
+  return withDb(workspaceId, async (db) => {
+    designLearning().ensureTables(db);
+    return designLearning().maybeDistill(db, { force: !!(args && args.force) });
+  });
+}
 
 // ---------- Websites ----------
 const websiteEngine = () => require('../src/websiteEngine');
@@ -328,6 +518,201 @@ function sitesRestore(workspaceId, versionId) {
   return withDb(workspaceId, (db) => websiteEngine().restoreVersion(db, versionId));
 }
 
+function siteErr(code, message) {
+  const e = new Error(message);
+  e.code = code;
+  return e;
+}
+function parseJsonField(value, what) {
+  if (typeof value === 'string') {
+    try { return JSON.parse(value); } catch { throw siteErr('INVALID_JSON', `${what} is not valid JSON.`); }
+  }
+  return value;
+}
+/** Same strict shape validation as Electron sites:save (src/ipc/websites.js). */
+function validatePages(pages) {
+  if (!Array.isArray(pages) || pages.length === 0) {
+    throw siteErr('INVALID_PAGES', 'pages must be a non-empty array.');
+  }
+  pages.forEach((p, i) => {
+    if (!p || typeof p !== 'object') throw siteErr('INVALID_PAGES', `pages[${i}] must be an object.`);
+    if (typeof p.slug !== 'string' || !String(p.slug).trim()) {
+      throw siteErr('INVALID_PAGES', `pages[${i}].slug must be a non-empty string.`);
+    }
+    if (typeof p.title !== 'string' || !p.title.trim()) {
+      throw siteErr('INVALID_PAGES', `pages[${i}].title must be a non-empty string.`);
+    }
+    const hasHtml = typeof p.html === 'string' && p.html.trim();
+    const hasSections = Array.isArray(p.sections) && p.sections.length > 0;
+    if (!hasHtml && !hasSections) throw siteErr('INVALID_PAGES', `pages[${i}] needs sections or html.`);
+    if (hasSections) {
+      p.sections.forEach((s, j) => {
+        if (!s || typeof s !== 'object') throw siteErr('INVALID_PAGES', `pages[${i}].sections[${j}] must be an object.`);
+        if (typeof s.type !== 'string' || !s.type.trim()) {
+          throw siteErr('INVALID_PAGES', `pages[${i}].sections[${j}].type must be a non-empty string.`);
+        }
+        if (!s.content || typeof s.content !== 'object' || Array.isArray(s.content)) {
+          throw siteErr('INVALID_PAGES', `pages[${i}].sections[${j}].content must be an object.`);
+        }
+      });
+    }
+  });
+  return pages;
+}
+/** Website row with parsed pages/theme, claim manifest and lead name (Electron siteRow). */
+function siteRow(db, id) {
+  const engine = websiteEngine();
+  const site = engine.getWebsite(db, id);
+  const lead = db.prepare('SELECT business_name, category FROM leads WHERE id = ?').get(site.lead_id);
+  return {
+    id: site.id,
+    lead_id: site.lead_id,
+    name: site.name,
+    industry: site.industry,
+    theme: parseJsonField(site.theme, 'theme'),
+    pages: parseJsonField(site.pages, 'pages'),
+    status: site.status,
+    origin: site.origin,
+    preview_path: site.preview_path,
+    created_at: site.created_at,
+    updated_at: site.updated_at,
+    business_name: lead ? lead.business_name : site.name,
+    category: lead ? lead.category : null,
+    manifest: engine.getManifest(db, site.id),
+  };
+}
+function sitesSave(workspaceId, id, args = {}) {
+  return withDb(workspaceId, (db) => {
+    const siteId = Number(id);
+    if (!Number.isInteger(siteId)) throw siteErr('INVALID_ID', 'id must be an integer.');
+    const pages = validatePages(parseJsonField(args.pages, 'pages'));
+    const theme = parseJsonField(args.theme, 'theme');
+    if (!theme || typeof theme !== 'object' || Array.isArray(theme)) {
+      throw siteErr('INVALID_THEME', 'theme must be an object.');
+    }
+    let note = args.note;
+    if (note != null && typeof note !== 'string') throw siteErr('INVALID_NOTE', 'note must be a string.');
+    if (typeof note === 'string') note = note.slice(0, 500);
+    const version = websiteEngine().saveSite(db, siteId, pages, theme, note);
+    logActivity(db, 'websites', `Website #${siteId} saved (version ${version.version_no}).`);
+    return { id: siteId, version: { id: version.id, version_no: version.version_no } };
+  });
+}
+function sitesForLead(workspaceId, leadId) {
+  return withDb(workspaceId, (db) => {
+    const lid = Number(leadId);
+    if (!Number.isInteger(lid)) throw siteErr('INVALID_ID', 'leadId must be an integer.');
+    const row = db.prepare('SELECT id FROM websites WHERE lead_id = ?').get(lid);
+    return { site: row ? siteRow(db, row.id) : null };
+  });
+}
+/** Render a stored website (by id) or supplied pages/theme to HTML. */
+function sitesRenderHtml(workspaceId, id, args = {}) {
+  return withDb(workspaceId, (db) => {
+    const engine = websiteEngine();
+    const opts = {
+      editable: !!args.editable,
+      pageSlug: args.pageSlug,
+      pageIndex: Number.isInteger(args.pageIndex) ? args.pageIndex : (args.pageIndex != null ? Number(args.pageIndex) : undefined),
+    };
+    let pages;
+    let theme;
+    if (Array.isArray(args.pages)) {
+      pages = args.pages;
+      theme = args.theme && typeof args.theme === 'object' ? args.theme : {};
+    } else {
+      const siteId = Number(id != null ? id : args.id);
+      if (!Number.isInteger(siteId)) throw siteErr('INVALID_ID', 'id must be an integer.');
+      const site = engine.getWebsite(db, siteId);
+      pages = parseJsonField(site.pages, 'pages');
+      theme = parseJsonField(site.theme, 'theme');
+      if (args.editable === undefined) opts.editable = true;
+    }
+    const list = pages.map((p) => ({ slug: p.slug, title: p.title }));
+    if (opts.pageSlug != null || Number.isInteger(opts.pageIndex)) {
+      return { html: engine.renderPageAt(pages, theme, opts), pages: list };
+    }
+    return { html: engine.renderSite(pages, theme, opts), pages: list };
+  });
+}
+/** Export a stored website and return a localhost preview URL. Does not open a browser unless opts.open. */
+async function sitesPreview(workspaceId, id, opts = {}) {
+  return withDb(workspaceId, async (db) => {
+    const siteId = Number(id);
+    if (!Number.isInteger(siteId)) throw siteErr('INVALID_ID', 'id must be an integer.');
+    const site = websiteEngine().getWebsite(db, siteId);
+    const pages = parseJsonField(site.pages, 'pages');
+    const theme = parseJsonField(site.theme, 'theme');
+    const openPreview = require('../src/openPreview');
+    if (opts && opts.open) {
+      const opened = await openPreview.openPagesFile(pages, theme, `site-${siteId}`);
+      return { id: siteId, url: opened.url || null, path: opened.path, folder: opened.folder, opened: true };
+    }
+    const preview = await openPreview.previewUrlForPages(pages, theme, `site-${siteId}`);
+    return {
+      id: siteId,
+      url: preview.url,
+      indexUrl: preview.indexUrl,
+      path: preview.path,
+      folder: preview.folder,
+      files: preview.files || [],
+      port: preview.port,
+      opened: false,
+    };
+  });
+}
+/**
+ * Safe structural edit from a natural-language instruction (theme colour, rename,
+ * add section, phone). Mirrors the stdio MCP website.edit; saved through saveSite
+ * so a version snapshot is created.
+ */
+function sitesApplyInstruction(workspaceId, id, instruction) {
+  return withDb(workspaceId, (db) => {
+    const siteId = Number(id);
+    const text = String(instruction || '').trim();
+    if (!text) throw new Error('instruction must be a non-empty string.');
+    if (text.length > 2000) throw new Error('instruction is too long (max 2000 chars).');
+    const engine = websiteEngine();
+    const site = engine.getWebsite(db, siteId);
+    const theme = parseJsonField(site.theme, 'theme') || {};
+    const pages = parseJsonField(site.pages, 'pages') || [];
+    let applied = null;
+    const colorMatch = text.match(/#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b/);
+    if (/primary\s*colou?r|theme\s*colou?r|brand\s*colou?r/i.test(text) && colorMatch) {
+      theme.primary = colorMatch[0];
+      applied = `Set primary theme color to ${colorMatch[0]}.`;
+    } else if (/business name|rename/i.test(text)) {
+      const m = text.match(/(?:to|as)\s+["']?([^"']{1,120})["']?$/i);
+      if (!m) throw new Error('Could not parse the new business name. Try: "rename business to Acme Plumbing".');
+      db.prepare("UPDATE websites SET name = ?, updated_at = datetime('now') WHERE id = ?").run(m[1].trim(), siteId);
+      applied = `Renamed website to "${m[1].trim()}".`;
+    } else if (/add (a |an )?section/i.test(text)) {
+      const m = text.match(/section[:\s]+(.{1,1000})$/is);
+      if (!m) throw new Error('Could not parse the section text. Try: "add section: We offer 24/7 emergency repairs".');
+      const home = pages.find((p) => p.slug === 'home') || pages[0];
+      if (!home) throw new Error('Website has no pages to edit.');
+      home.sections = home.sections || [];
+      home.sections.push({ type: 'custom', heading: '', body: m[1].trim(), content: { heading: '', body: m[1].trim() } });
+      applied = 'Added a custom section to the home page.';
+    } else if (/phone/i.test(text)) {
+      const m = text.match(/(\+?[\d][\d\s().-]{6,20})/);
+      if (!m) throw new Error('Could not parse a phone number from the instruction.');
+      const contact = ((pages.find((p) => p.slug === 'home') || pages[0] || {}).sections || []).find((s) => s.type === 'contact');
+      if (contact) { contact.body = m[1].trim(); if (contact.content) contact.content.phone = m[1].trim(); }
+      applied = `Set contact phone to ${m[1].trim()}.`;
+    }
+    if (!applied) {
+      logActivity(db, 'mcp', `website.edit queued (no safe structural edit matched): site=${siteId} instruction="${text.slice(0, 200)}"`);
+      return { id: siteId, applied: false, queued: true, note: 'Instruction did not match a safe structural edit; pass pages/theme for a full edit.' };
+    }
+    const version = engine.saveSite(db, siteId, pages, theme, `MCP edit: ${text.slice(0, 200)}`);
+    return { id: siteId, applied: true, summary: applied, version: { id: version.id, version_no: version.version_no } };
+  });
+}
+async function designOpenPreview(workspaceId, id, opts = {}) {
+  return withDb(workspaceId, (db) => designJobs().previewUrl(db, Number(id), { open: !!(opts && opts.open) }));
+}
+
 // ---------- Outreach ----------
 const outreach = () => require('../src/outreach');
 
@@ -376,15 +761,89 @@ function intentGet(workspaceId, leadId) {
 function intentRecord(workspaceId, leadId, event, note) {
   return withDb(workspaceId, (db) => outreach().recordIntent(db, leadId, event, note));
 }
-function emailCompose(workspaceId, leadId, templateId) {
+function emailCompose(workspaceId, leadId, templateId, opts = {}) {
   return withDb(workspaceId, (db) => {
-    const template = db.prepare('SELECT * FROM email_templates WHERE id = ?').get(Number(templateId));
-    if (!template) throw new Error('Template not found');
+    const rendered = emailComposeRender(db, leadId, templateId);
+    if (!(opts && opts.queue)) return rendered;
+    // queue:true — persist as a 'queued' message in the draft "Compose" campaign so email.send can deliver it.
     const lead = leadEngine().getLead(db, Number(leadId));
-    if (!lead) throw new Error('Lead not found');
-    const facts = db.prepare('SELECT * FROM business_facts WHERE lead_id = ?').all(Number(leadId));
-    const email = require('../src/email');
-    return email.personalize(template, lead, facts, {});
+    if (!lead.email) throw new Error(`Lead ${leadId} has no email address.`);
+    const footer = getSetting(db, 'mail.footer', '');
+    const body = rendered.body + (footer ? `\n\n--\n${footer}` : '');
+    let campaign = db.prepare("SELECT id FROM campaigns WHERE name = ? AND status = 'draft'").get('Compose');
+    if (!campaign) {
+      campaign = { id: db.prepare('INSERT INTO campaigns (name, template_id, status) VALUES (?, ?, ?)').run('Compose', Number(templateId), 'draft').lastInsertRowid };
+    }
+    const r = db.prepare(
+      'INSERT INTO campaign_messages (campaign_id, lead_id, to_email, subject, body, status) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(Number(campaign.id), Number(leadId), lead.email, rendered.subject, body, 'queued');
+    return { ...rendered, body, messageId: Number(r.lastInsertRowid), to: lead.email, queued: true };
+  });
+}
+function emailComposeRender(db, leadId, templateId) {
+  const template = db.prepare('SELECT * FROM email_templates WHERE id = ?').get(Number(templateId));
+  if (!template) throw new Error('Template not found');
+  const lead = leadEngine().getLead(db, Number(leadId));
+  if (!lead) throw new Error('Lead not found');
+  const facts = db.prepare('SELECT * FROM business_facts WHERE lead_id = ?').all(Number(leadId));
+  const email = require('../src/email');
+  return email.personalize(template, lead, facts, {});
+}
+/**
+ * Send ONE queued campaign message now (outside the campaign queue).
+ * Respects automation pause, suppression list and the daily outreach cap.
+ */
+async function emailSend(workspaceId, messageId) {
+  return withDb(workspaceId, async (db) => {
+    const o = outreach();
+    const id = Number(messageId);
+    if (!Number.isInteger(id) || id <= 0) throw new Error('messageId must be a positive integer.');
+    if (o.isAutomationPaused(db)) {
+      throw Object.assign(new Error('Automation is paused (kill switch). Resume it before sending.'), { code: 'AUTOMATION_PAUSED' });
+    }
+    const msg = db.prepare('SELECT * FROM campaign_messages WHERE id = ?').get(id);
+    if (!msg) throw Object.assign(new Error(`Message ${id} not found.`), { code: 404 });
+    if (msg.status !== 'queued') throw new Error(`Message ${id} is not queued (status: ${msg.status}).`);
+
+    const suppressed = o.isSuppressed(db, msg.to_email);
+    if (suppressed) {
+      db.prepare("UPDATE campaign_messages SET status = 'suppressed', error = ? WHERE id = ?")
+        .run(`suppressed at send time: ${suppressed.reason}`, id);
+      db.prepare('INSERT INTO email_events (message_id, type, detail) VALUES (?, ?, ?)')
+        .run(id, 'unsubscribed', `suppressed: ${suppressed.reason}`);
+      return { messageId: id, sent: false, suppressed: true, reason: suppressed.reason };
+    }
+
+    const settings = o.readSettings(db);
+    const cap = Math.max(1, Number(settings['cost.max_outreach_per_day']) || 200);
+    if (o.sentTodayCount(db) >= cap) {
+      throw Object.assign(new Error(`Daily outreach cap reached (${cap}). Message left queued.`), { code: 'CAP_REACHED' });
+    }
+
+    const provider = require('../src/email').getProvider(settings, db);
+    try {
+      await provider.send({ to: msg.to_email, subject: msg.subject, html: msg.body });
+    } catch (err) {
+      const text = String((err && err.message) || err);
+      db.prepare("UPDATE campaign_messages SET status = 'failed', error = ? WHERE id = ?").run(text.slice(0, 1000), id);
+      db.prepare('INSERT INTO email_events (message_id, type, detail) VALUES (?, ?, ?)').run(id, 'failed', text.slice(0, 500));
+      throw Object.assign(new Error(`Send failed: ${text}`), { code: 'SEND_FAILED' });
+    }
+    db.prepare("UPDATE campaign_messages SET status = 'sent', sent_at = ?, error = NULL WHERE id = ?")
+      .run(new Date().toISOString().slice(0, 19).replace('T', ' '), id);
+    db.prepare('INSERT INTO email_events (message_id, type, detail) VALUES (?, ?, ?)').run(id, 'sent', `via ${provider.name}`);
+    if (msg.lead_id) {
+      try {
+        db.prepare(
+          `UPDATE leads SET status = 'contacted', updated_at = datetime('now')
+           WHERE id = ? AND status NOT IN ('engaged','claimed','trial','customer','lost')`
+        ).run(msg.lead_id);
+        db.prepare('INSERT INTO prospect_events (lead_id, type, detail) VALUES (?, ?, ?)')
+          .run(msg.lead_id, 'email.sent', 'single send');
+      } catch { /* non-fatal */ }
+    }
+    logActivity(db, 'outreach', `Message #${id} sent to ${msg.to_email} (provider: ${provider.name})`);
+    return { messageId: id, sent: true, to: msg.to_email, provider: provider.name };
   });
 }
 
@@ -428,9 +887,43 @@ function promptsList(workspaceId) {
 }
 function promptsSave(workspaceId, key, body) {
   return withDb(workspaceId, (db) => {
-    const info = db.prepare("UPDATE prompts SET body = ?, updated_at = datetime('now') WHERE key = ?").run(body, key);
+    const text = body == null ? '' : String(body);
+    if (text.trim() === '') throw new Error('Prompt body may not be empty.');
+    if (text.length > 20000) throw new Error('Prompt body is too long (max 20000 chars).');
+    const info = db.prepare("UPDATE prompts SET body = ?, updated_at = datetime('now') WHERE key = ?").run(text, key);
     if (!info.changes) throw new Error(`Unknown prompt key: ${key}`);
+    logActivity(db, 'prompts', `Prompt saved: ${key}`);
     return { key };
+  });
+}
+function promptsReset(workspaceId, key) {
+  return withDb(workspaceId, (db) => {
+    const { PROMPT_SEEDS } = require('../src/seed');
+    const k = String(key || '');
+    const seed = PROMPT_SEEDS.find((p) => p.key === k);
+    if (!seed) throw new Error(`Unknown prompt key "${k}".`);
+    // Row may be missing if workspace pre-dates the prompt; upsert from the seed.
+    db.prepare(
+      `INSERT INTO prompts (key, name, body, updated_at) VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET body = excluded.body, updated_at = datetime('now')`
+    ).run(seed.key, seed.name, seed.body);
+    logActivity(db, 'prompts', `Prompt restored to seed default: ${k}`);
+    return { key: k, body: seed.body };
+  });
+}
+function activityRecent(workspaceId, args = {}) {
+  return withDb(workspaceId, (db) => {
+    const { pageArgs, pageResult } = require('../src/paginate');
+    const opts = args || {};
+    const paging = pageArgs(
+      { page: opts.page || 1, pageSize: opts.pageSize != null ? opts.pageSize : (opts.limit || 50) },
+      { pageSize: 50, maxSize: 200 }
+    );
+    const total = db.prepare('SELECT COUNT(*) AS c FROM activity_log').get().c;
+    const rows = db.prepare(
+      'SELECT id, area, message, at FROM activity_log ORDER BY id DESC LIMIT ? OFFSET ?'
+    ).all(paging.pageSize, paging.offset);
+    return Object.assign({ rows }, pageResult(rows, total, paging.page, paging.pageSize));
   });
 }
 function aiUsage(workspaceId, days = 30) {
@@ -444,7 +937,12 @@ function aiUsage(workspaceId, days = 30) {
     const recent = db.prepare(
       "SELECT id, task, model, prompt_tokens, completion_tokens, cost_usd, lead_id, note, at FROM ai_usage WHERE at >= datetime('now', ?) ORDER BY id DESC LIMIT 100"
     ).all(`-${days} days`);
-    return { todayUsd: today, monthUsd: month, days, recent };
+    const byTask = db.prepare(
+      `SELECT task, COUNT(*) AS calls, SUM(prompt_tokens) AS prompt_tokens,
+              SUM(completion_tokens) AS completion_tokens, ROUND(SUM(cost_usd), 4) AS cost_usd
+       FROM ai_usage WHERE at >= datetime('now', ?) GROUP BY task ORDER BY cost_usd DESC`
+    ).all(`-${days} days`);
+    return { todayUsd: today, monthUsd: month, days, byTask, recent };
   });
 }
 function aiStatus(workspaceId) {
@@ -515,17 +1013,23 @@ module.exports = {
   dashboardStats,
   leadsList, leadsFacets, leadsGet, leadsCreate, leadsUpdate, leadsDelete,
   leadsScore, leadsQualify, leadsMerge, leadsImportCsv, leadsResearch, leadsDiscover,
-  leadsDuplicates, leadsBulk,
+  leadsDuplicates, leadsBulk, leadsAddFact, leadsTimeline, prospectScore,
   providersList, providersSearch, discoveryGet, discoverySet, discoveryRunNow,
   designList, designGet, designCreate, designUpdate, designDelete, designPending, designNext,
   designDeliver, designAsk, designAnswer, designReview, designRedesign, designImprove,
   designPreviewUrl, designAddImages, designGenerateImages,
+  designDefaultInstructions, designListAnswers, designSetContact, designEmailQuestions, designEmailDelivery,
+  designRecordReply, designSaveWebsite, designRemoveDelivery, designAssetBase, designRenderHtml, designOpenPreview,
+  emailRedesignList, emailRedesignGet, emailRedesignIngest, emailRedesignSubmit, emailRedesignDismiss, emailRedesignScan,
+  learningStatus, learningPlaybook, learningEvents, learningClear, learningDistill,
   sitesList, sitesGet, sitesGenerate, sitesQa, sitesExport, sitesAddImages, sitesVersions, sitesRestore,
+  sitesSave, sitesForLead, sitesRenderHtml, sitesPreview, sitesApplyInstruction, validatePages,
   campaignsList, campaignsCreate, campaignsSetStatus, campaignsMessages,
   templatesList, templatesSave, templatesDelete,
   outreachProcessQueue, outreachStats, suppressionList, suppressionAdd, suppressionRemove,
-  pipelineBoard, intentGet, intentRecord, emailCompose,
-  settingsGetAll, settingsSet, settingsSetSecret, automationSet, promptsList, promptsSave, aiUsage, aiStatus,
+  pipelineBoard, intentGet, intentRecord, emailCompose, emailSend,
+  settingsGetAll, settingsSet, settingsSetSecret, automationSet, promptsList, promptsSave, promptsReset, activityRecent,
+  aiUsage, aiStatus,
   cfGetConfig, cfSaveConfig, cfTest, cfPublish,
   runDiscoveryJobTick, runOutreachJobTick,
   getSetting, setSetting,

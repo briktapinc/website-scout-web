@@ -46,6 +46,18 @@ function openWorkspaceDb(workspaceId) {
     console.warn('[workspaceDb] design.ensureTables:', e.message);
   }
   try {
+    const emailRedesign = require('../src/emailRedesign');
+    if (typeof emailRedesign.ensureTables === 'function') emailRedesign.ensureTables(db);
+  } catch (e) {
+    console.warn('[workspaceDb] emailRedesign.ensureTables:', e.message);
+  }
+  try {
+    const designLearning = require('../src/designLearning');
+    if (typeof designLearning.ensureTables === 'function') designLearning.ensureTables(db);
+  } catch (e) {
+    console.warn('[workspaceDb] designLearning.ensureTables:', e.message);
+  }
+  try {
     const leadEngine = require('../src/leadEngine');
     if (typeof leadEngine.ensureLeadColumns === 'function') leadEngine.ensureLeadColumns(db);
   } catch { /* optional */ }
