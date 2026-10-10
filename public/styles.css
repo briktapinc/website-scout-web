@@ -256,6 +256,25 @@ pre.out {
 details > summary { cursor: pointer; font-weight: 650; }
 details[open] > summary { margin-bottom: 8px; }
 
+/* ---------- MCP page ---------- */
+.mcp-tool-groups { display: grid; gap: 8px; }
+.mcp-tool-group {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #faf7f2;
+}
+.mcp-tool-group summary { list-style: none; display: flex; align-items: baseline; gap: 8px; }
+.mcp-tool-group summary::-webkit-details-marker { display: none; }
+.mcp-tool-list {
+  margin: 8px 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 4px;
+}
+.mcp-tool-list li { line-height: 1.4; }
+.mcp-tool-list code { font-size: 12px; }
+
 /* ---------- Badges ---------- */
 .badge, .pill, .score-pill {
   display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;

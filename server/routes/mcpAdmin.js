@@ -3,11 +3,25 @@
 const express = require('express');
 const { query } = require('../db');
 const { createWorkspaceToken } = require('../workspace');
-const { toolDefs, SERVER_INFO } = require('../mcp');
+const { toolDefs, SERVER_INFO, PROTOCOL_VERSION } = require('../mcp');
 const { requireWorkspace, requireRole } = require('../middleware');
 
 const router = express.Router();
 router.use(requireWorkspace);
+
+function catalogFromDefs() {
+  const catalog = toolDefs().map((t) => ({
+    name: t.name,
+    description: t.description || '',
+  }));
+  const groups = {};
+  for (const t of catalog) {
+    const key = t.name.includes('.') ? t.name.split('.')[0] : 'other';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(t.name);
+  }
+  return { catalog, groups, toolNames: catalog.map((t) => t.name) };
+}
 
 router.get('/status', async (req, res, next) => {
   try {
@@ -16,12 +30,19 @@ router.get('/status', async (req, res, next) => {
        FROM workspace_tokens WHERE workspace_id = :workspaceId ORDER BY id DESC`,
       { workspaceId: req.auth.workspaceId }
     );
+    const { catalog, groups, toolNames } = catalogFromDefs();
     res.json({
       ok: true,
       data: {
         server: SERVER_INFO,
+        protocolVersion: PROTOCOL_VERSION,
         endpoint: '/mcp',
-        tools: toolDefs().map((t) => t.name),
+        transport: 'streamable-http',
+        auth: 'Bearer workspace token',
+        tools: toolNames,
+        catalog,
+        groups,
+        toolCount: toolNames.length,
         tokens,
       },
     });

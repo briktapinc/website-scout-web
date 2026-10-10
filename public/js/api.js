@@ -199,9 +199,10 @@ window.ScoutApi = (() => {
     jobsDelete: (id) => del('/jobs/' + id),
     jobsRun: (id) => post('/jobs/' + id + '/run', {}),
 
-    // ---- MCP ----
+    // ---- MCP (workspace admin: status, mint, revoke) ----
     mcpStatus: () => get('/mcp/status'),
-    mcpToken: (name) => post('/mcp/token', { name }),
-    mcpRevoke: (id) => del('/mcp/token/' + id),
+    mcpToken: (name) => post('/mcp/token', { name: name || 'MCP' }),
+    mcpRevoke: (id) => del('/mcp/token/' + encodeURIComponent(id)),
+    mcpDeleteToken: (id) => del('/mcp/token/' + encodeURIComponent(id)),
   };
 })();

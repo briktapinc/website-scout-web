@@ -355,4 +355,4 @@ async function handleJsonRpc(workspaceId, body) {
   }
 }
 
-module.exports = { handleJsonRpc, callTool, toolDefs, SERVER_INFO, createWorkspaceToken };
+module.exports = { handleJsonRpc, callTool, toolDefs, SERVER_INFO, PROTOCOL_VERSION, createWorkspaceToken };
