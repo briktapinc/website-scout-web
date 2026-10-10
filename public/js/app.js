@@ -106,6 +106,32 @@ function dropEmpty(obj) {
   return out;
 }
 
+/**
+ * Normalize list payloads from /api/v1. Accepts a bare array, or an object that
+ * may nest the array under common keys (and one level of accidental double-wrap).
+ */
+function asList(value, keys) {
+  const prefer = keys || ['rows', 'jobs', 'sites', 'leads', 'templates', 'tokens', 'items', 'requests', 'versions', 'prompts'];
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'object') return [];
+  for (let i = 0; i < prefer.length; i++) {
+    const k = prefer[i];
+    if (Array.isArray(value[k])) return value[k];
+  }
+  for (let i = 0; i < prefer.length; i++) {
+    const inner = value[prefer[i]];
+    if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+      const nested = asList(inner, prefer);
+      if (nested.length || Array.isArray(inner.rows) || Array.isArray(inner.jobs)) return nested;
+    }
+  }
+  return [];
+}
+
+function dataOf(res) {
+  return res && res.data != null ? res.data : {};
+}
+
 function pager(host, { page, pages, total }, onPage) {
   host.innerHTML = `<button class="btn small" data-p="prev" ${page <= 1 ? 'disabled' : ''}>Prev</button>
     <span>Page ${page} of ${Math.max(1, pages || 1)} (${total || 0} total)</span>
@@ -354,12 +380,14 @@ function renderAuth() {
 }
 
 function fillWorkspaces(workspaces, currentId) {
-  wsSelect.innerHTML = (workspaces || []).map((w) =>
+  if (!wsSelect) return;
+  wsSelect.innerHTML = asList(workspaces).map((w) =>
     `<option value="${w.id}" ${Number(w.id) === Number(currentId) ? 'selected' : ''}>${esc(w.name)} (${esc(w.role)})</option>`
   ).join('');
 }
 
 async function refreshAutomation() {
+  if (!autoEl) return;
   try {
     const res = await api.stats();
     automationPaused = !!res.data.automationPaused;
@@ -404,7 +432,9 @@ async function pageDashboard() {
   const d = st.data;
   const paused = !!d.automationPaused;
   automationPaused = paused;
-  const activity = (act && act.data && act.data.rows) || d.activity || [];
+  const activity = asList(act && act.data, ['rows']).length
+    ? asList(act.data, ['rows'])
+    : asList(d.activity);
   const byStatus = d.byStatus || {};
 
   view.innerHTML = `
@@ -537,8 +567,8 @@ async function pageLeads(param, query) {
       page: leadsState.page, pageSize: leadsState.pageSize,
     });
     if (!$('#l-body')) return;
-    const rows = r.data.leads || [];
-    leadsState.total = r.data.total || 0;
+    const rows = asList(r.data, ['leads', 'rows']);
+    leadsState.total = r.data.total || rows.length;
     body.innerHTML = rows.map((l) => `<tr>
       <td><input type="checkbox" class="row-check" data-id="${l.id}" ${leadsState.selected.has(l.id) ? 'checked' : ''} aria-label="Select lead" /></td>
       <td><button class="link-btn" data-act="open" data-id="${l.id}">${esc(l.business_name)}</button>${l.qualified ? ' <span class="badge ok">qualified</span>' : ''}<div class="hint">${esc(l.email || '')}</div></td>
@@ -993,13 +1023,14 @@ async function pageWebsites(param) {
     const r = await api.websites({ page: sitesState.page, pageSize: 25, status: sitesState.status });
     const body = $('#w-body');
     if (!body) return;
-    const d = r.data;
-    body.innerHTML = (d.sites || []).map((s) => `<tr>
+    const d = r.data || {};
+    const sites = asList(d, ['sites', 'rows']);
+    body.innerHTML = sites.map((s) => `<tr>
       <td><button class="link-btn" data-act="open" data-id="${s.id}">${esc(s.name)}</button></td>
       <td>${esc(s.business_name || ('#' + s.lead_id))}</td>
       <td>${statusBadge(s.status)}</td><td>${esc(s.origin || '—')}</td><td>${esc(fmtDate(s.updated_at))}</td></tr>`).join('')
       || '<tr><td colspan="5" class="empty">No websites yet. Build one for a lead above.</td></tr>';
-    pager($('#w-pager'), { page: d.page || 1, pages: d.pages || 1, total: d.total || 0 }, (p) => { sitesState.page = p; load(); });
+    pager($('#w-pager'), { page: d.page || 1, pages: d.pages || 1, total: d.total || sites.length }, (p) => { sitesState.page = p; load(); });
   }
   $('#w-status').addEventListener('change', (e) => { sitesState.status = e.target.value; sitesState.page = 1; load(); });
 
@@ -1035,7 +1066,7 @@ async function pageWebsiteDetail(id) {
   try { manifest = (await api.websiteByLead(site.lead_id)).data.site; } catch { /* optional */ }
   const pages = parseJson(site.pages, []);
   const theme = parseJson(site.theme, {});
-  const versions = verR ? (verR.data.versions || []) : [];
+  const versions = verR ? asList(verR.data, ['versions', 'rows']) : [];
   const cf = cfR ? cfR.data : null;
 
   view.innerHTML = `
@@ -1215,9 +1246,9 @@ async function pageDesign(param) {
     api.designList({ page: designState.page, pageSize: 25, status: designState.status }),
     api.emailRedesignList({ pendingOnly: 1 }).catch(() => null),
   ]);
-  const counts = pend ? pend.data.counts : { waiting_on_agent: 0, questions_pending: 0 };
-  const jobs = list.data.jobs || [];
-  const ers = er ? (er.data.requests || []) : [];
+  const counts = pend ? (pend.data.counts || { waiting_on_agent: 0, questions_pending: 0 }) : { waiting_on_agent: 0, questions_pending: 0 };
+  const jobs = asList(list.data, ['jobs', 'rows']);
+  const ers = er ? asList(er.data, ['requests', 'rows']) : [];
 
   view.innerHTML = `
     <div class="page-head">
@@ -1595,8 +1626,8 @@ async function pageOutreach(param, query) {
 }
 
 async function tabCampaigns(host) {
-  const r = (await api.campaigns({ pageSize: 50 })).data;
-  const rows = r.rows || [];
+  const r = (await api.campaigns({ pageSize: 50 })).data || {};
+  const rows = asList(r, ['rows', 'campaigns']);
   host.innerHTML = `
     <div class="toolbar"><button class="btn primary" data-act="new">New campaign</button><button class="btn" data-act="compose">Compose single email</button></div>
     <div class="table-wrap"><table>
@@ -1754,7 +1785,7 @@ async function openComposeModal() {
 }
 
 async function tabTemplates(host) {
-  const templates = (await api.templates()).data.templates || [];
+  const templates = asList((await api.templates()).data, ['templates', 'rows']);
   host.innerHTML = `
     <div class="grid cols-2" style="align-items:start">
       <div class="card"><h3 id="tp-title">New template</h3>
@@ -1837,14 +1868,14 @@ async function tabSuppression(host) {
 async function pagePipeline() {
   view.classList.add('wide');
   const res = await api.pipeline();
-  const columns = (res.data && res.data.columns) || [];
+  const columns = asList(res.data && res.data.columns);
   view.innerHTML = `
     <div class="page-head"><div><h1>Pipeline</h1><p class="lede">Move leads between stages and record intent events (opens, clicks, claims).</p></div>
       <div class="page-actions"><button class="btn" data-act="refresh">Refresh</button></div></div>
     <div class="kanban">${columns.map((col) => `
       <div class="kanban-col" data-col="${esc(col.key)}">
         <div class="kanban-head"><span>${esc(col.title)}</span><span class="count">${esc(col.total)}</span></div>
-        ${(col.leads || []).map((l) => `
+        ${asList(col.leads).map((l) => `
           <div class="kanban-card">
             <div class="title"><button class="link-btn" data-act="open" data-id="${l.id}">${esc(l.business_name)}</button></div>
             <div class="hint">${esc(l.category || '')}${l.email ? ' · ' + esc(l.email) : ''}</div>
@@ -1877,14 +1908,18 @@ async function pagePipeline() {
 
 async function pageJobs() {
   const res = await api.jobsList();
-  const jobs = res.data.jobs || [];
+  const d = res.data || {};
+  const jobs = asList(d, ['jobs', 'rows']);
+  const types = (Array.isArray(d.types) && d.types.length)
+    ? d.types
+    : ['discovery', 'outreach_process', 'research', 'custom'];
   view.innerHTML = `
     <div class="page-head"><div><h1>Jobs</h1><p class="lede">Schedule discovery, outreach processing and custom work — also available via MCP <code>jobs.*</code>. Jobs honor the automation kill switch.</p></div></div>
     <div class="card"><h3>Create job</h3>
       <form id="job-form">
         <div class="row">
           <div class="field"><label>Name</label><input name="name" required placeholder="Nightly discovery" /></div>
-          <div class="field"><label>Type</label><select name="type">${(res.data.types || []).map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}</select></div>
+          <div class="field"><label>Type</label><select name="type">${types.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}</select></div>
           <div class="field"><label>Interval (minutes)</label><input name="interval_minutes" type="number" min="1" value="360" /></div>
         </div>
         <div class="field"><label>Payload JSON (optional)</label><textarea name="payload" class="mono">{"category":"Plumber","location":"Springfield","limit":8}</textarea></div>
@@ -1957,8 +1992,8 @@ async function pageMcp() {
   const d = res.data || {};
   const origin = window.location.origin;
   const endpoint = origin + '/mcp';
-  const tokens = d.tokens || [];
-  const toolCount = d.toolCount != null ? d.toolCount : (d.tools || []).length;
+  const tokens = asList(d, ['tokens', 'rows']);
+  const toolCount = d.toolCount != null ? d.toolCount : asList(d, ['tools']).length;
   const serverLabel = d.server
     ? `${d.server.name || 'website-scout-web-mcp'} ${d.server.version || ''}`.trim()
     : 'website-scout-web-mcp';
@@ -2097,10 +2132,10 @@ async function pageSettings() {
     api.settingsGet(), safe(api.prompts()), safe(api.discoveryGet()), safe(api.providers()),
     safe(api.aiUsage(30)), safe(api.aiStatus()), safe(api.cfGet()),
   ]);
-  const s = setR.data.settings || {};
-  const prompts = (promptsR && promptsR.prompts) || [];
+  const s = (setR.data && setR.data.settings) || {};
+  const prompts = asList(promptsR, ['prompts', 'rows']);
   const sched = schedR || {};
-  const providers = ((provR && provR.providers) || []).filter((p) => p.name !== 'csv' && p.name !== 'manual');
+  const providers = asList(provR, ['providers']).filter((p) => p.name !== 'csv' && p.name !== 'manual');
   const paused = s.automation_paused === '1';
   automationPaused = paused;
 
@@ -2360,36 +2395,46 @@ async function navigate() {
   }
 }
 
-wsSelect.addEventListener('change', async () => {
-  const id = Number(wsSelect.value);
-  api.setWorkspaceId(id);
-  try { await api.selectWorkspace(id); } catch (err) { toast(err.message, 'err'); }
-  leadsState.selected.clear();
-  await refreshAutomation();
-  navigate();
-});
-
-document.getElementById('logout-btn').addEventListener('click', async () => {
-  try { await api.logout(); } catch { /* ignore */ }
-  localStorage.removeItem('scout.workspaceId');
-  renderAuth();
-});
-
-autoEl.addEventListener('click', (e) => {
-  e.preventDefault();
-  if (e.shiftKey || e.ctrlKey || e.metaKey) { window.location.hash = '#/settings'; return; }
-  const next = !automationPaused;
-  if (!window.confirm(next ? 'Pause all automation (discovery, jobs, outreach, AI)?' : 'Resume automation?')) return;
-  safeRun(null, async () => {
-    await setAutomation(next);
-    const { route } = parseHash();
-    if (route === 'dashboard' || route === 'settings') navigate();
+if (wsSelect) {
+  wsSelect.addEventListener('change', async () => {
+    const id = Number(wsSelect.value);
+    api.setWorkspaceId(id);
+    try { await api.selectWorkspace(id); } catch (err) { toast(err.message, 'err'); }
+    leadsState.selected.clear();
+    await refreshAutomation();
+    navigate();
   });
-});
+}
 
-document.getElementById('menu-btn').addEventListener('click', openNav);
-document.getElementById('sidebar-close').addEventListener('click', closeNav);
-document.getElementById('sidebar-backdrop').addEventListener('click', closeNav);
+const logoutBtn = document.getElementById('logout-btn');
+if (logoutBtn) {
+  logoutBtn.addEventListener('click', async () => {
+    try { await api.logout(); } catch { /* ignore */ }
+    localStorage.removeItem('scout.workspaceId');
+    renderAuth();
+  });
+}
+
+if (autoEl) {
+  autoEl.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (e.shiftKey || e.ctrlKey || e.metaKey) { window.location.hash = '#/settings'; return; }
+    const next = !automationPaused;
+    if (!window.confirm(next ? 'Pause all automation (discovery, jobs, outreach, AI)?' : 'Resume automation?')) return;
+    safeRun(null, async () => {
+      await setAutomation(next);
+      const { route } = parseHash();
+      if (route === 'dashboard' || route === 'settings') navigate();
+    });
+  });
+}
+
+const menuBtn = document.getElementById('menu-btn');
+const sidebarClose = document.getElementById('sidebar-close');
+const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+if (menuBtn) menuBtn.addEventListener('click', openNav);
+if (sidebarClose) sidebarClose.addEventListener('click', closeNav);
+if (sidebarBackdrop) sidebarBackdrop.addEventListener('click', closeNav);
 window.addEventListener('hashchange', navigate);
 
 (async function init() {
