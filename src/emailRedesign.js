@@ -26,8 +26,9 @@ const REDESIGN_SUBJECT_RE = /\b(re\s*[-:]?\s*)?(design\s*)?(redesign|revise|revi
 const REDESIGN_BODY_RE = /\b(redesign|please\s+revise|please\s+change|can\s+you\s+(change|update|fix)|needs?\s+(a\s+)?(redesign|revision)|===?\s*REDESIGN\s+REQUEST\s*===?)\b/i;
 const IMPROVEMENTS_SUBJECT_RE = /\b(improvements?|polish|tweaks?|small\s+fixes?|copy\s+tweaks?|cta\s+(fix|tweak)|mobile\s+(fix|sizing)|imagery)\b/i;
 const IMPROVEMENTS_BODY_RE = /\b(improvements?|polish|small\s+(fix|tweak|change)|copy\s+tweak|cta|mobile\s+sizing|===?\s*IMPROVEMENTS?\s+REQUEST\s*===?)\b/i;
-// Match [Job #12], Job #12, project #12, Questions about project #12:, etc.
-const JOB_ID_RE = /\[Job\s*#\s*(\d+)\]|\b(?:design\s*job|project|job|website)\s*#\s*(\d+)\b/i;
+// Prefer explicit [Job #12]; also project/job/design job #12 (not bare "website #1").
+const JOB_ID_BRACKET_RE = /\[Job\s*#\s*(\d+)\]/i;
+const JOB_ID_RE = /\b(?:design\s*job|project|job)\s*#\s*(\d+)\b/i;
 
 function fail(code, message) {
   const e = new Error(message);
@@ -141,11 +142,24 @@ function detectRequestKind(subject, body, override) {
 }
 
 function extractJobId(subject, body) {
-  const hay = `${subject || ''}\n${body || ''}`;
-  const m = hay.match(JOB_ID_RE);
-  if (!m) return null;
-  const id = Number(m[1] || m[2]);
-  return Number.isFinite(id) && id > 0 ? id : null;
+  // Prefer subject (clients keep [Job #N] there); ignore quoted reply tails in body.
+  const subjectText = String(subject || '');
+  const bodyText = String(body || '').split(/\nOn .+wrote:\n/)[0].split(/\n>/)[0];
+  for (const hay of [subjectText, bodyText]) {
+    const bracket = hay.match(JOB_ID_BRACKET_RE);
+    if (bracket) {
+      const id = Number(bracket[1]);
+      if (Number.isFinite(id) && id > 0) return id;
+    }
+  }
+  for (const hay of [subjectText, bodyText]) {
+    const m = hay.match(JOB_ID_RE);
+    if (m) {
+      const id = Number(m[1]);
+      if (Number.isFinite(id) && id > 0) return id;
+    }
+  }
+  return null;
 }
 
 /** Canonical subject token clients should keep when replying. */
@@ -385,7 +399,7 @@ async function interpretClientEmail(db, {
     if (typeof ai.setDb === 'function') ai.setDb(db);
   } catch { /* ignore */ }
 
-  if (!ai.aiConfigured || !ai.aiConfigured()) {
+  if (!ai.aiConfigured || !ai.aiConfigured(db)) {
     return {
       instructions: fallbackInstructions,
       requestKind: fallbackKind,
@@ -423,6 +437,7 @@ Rules:
       task: 'editor',
       maxTokens: 900,
       note: jobId != null ? `email-interpret job #${jobId}` : 'email-interpret',
+      db,
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: user },

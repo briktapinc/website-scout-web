@@ -28,20 +28,21 @@ let _db = null;
 /** Inject the better-sqlite3 database instance (used by tests / ipc layer). */
 function setDb(db) { _db = db; }
 
-function getDb() {
+function getDb(override) {
+  if (override) return override;
   if (_db) return _db;
   // Lazily required so this module never crashes at load time when db.js
   // is provided by another workstream.
   return require('./db').db;
 }
 
-function getSetting(key, def) {
-  const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(key);
+function getSetting(key, def, dbOverride) {
+  const row = getDb(dbOverride).prepare('SELECT value FROM settings WHERE key = ?').get(key);
   return row ? row.value : def;
 }
 
-function aiConfigured() {
-  const key = getSetting('ai.api_key', '');
+function aiConfigured(dbOverride) {
+  const key = getSetting('ai.api_key', '', dbOverride);
   return !!(key && String(key).trim());
 }
 
@@ -63,7 +64,7 @@ const VALID_TASKS = new Set([
   'research', 'generation', 'scoring', 'email', 'qa', 'editor', 'followup',
 ]);
 
-async function chat({ task, messages, maxTokens = 2000, leadId = null, note = null } = {}) {
+async function chat({ task, messages, maxTokens = 2000, leadId = null, note = null, db: dbOverride = null } = {}) {
   if (!task || !VALID_TASKS.has(task)) {
     throw fail('INVALID_TASK', `Unknown AI task "${task}".`);
   }
@@ -92,18 +93,18 @@ async function chat({ task, messages, maxTokens = 2000, leadId = null, note = nu
     throw fail('INVALID_MAX_TOKENS', 'maxTokens must be a positive number.');
   }
 
-  const db = getDb();
+  const db = getDb(dbOverride);
 
-  const apiKey = getSetting('ai.api_key', '');
+  const apiKey = getSetting('ai.api_key', '', db);
   if (!apiKey || !String(apiKey).trim()) {
     throw fail('AI_NOT_CONFIGURED', 'AI is not configured: set ai.api_key in Settings.');
   }
 
-  if (String(getSetting('automation_paused', '0')) === '1') {
+  if (String(getSetting('automation_paused', '0', db)) === '1') {
     throw fail('AUTOMATION_PAUSED', 'Automation is paused; AI calls are blocked.');
   }
 
-  const budget = parseFloat(getSetting('cost.daily_budget_usd', '10'));
+  const budget = parseFloat(getSetting('cost.daily_budget_usd', '10', db));
   if (budget > 0) {
     const spent = todaySpendUsd(db);
     if (spent >= budget) {
@@ -111,20 +112,20 @@ async function chat({ task, messages, maxTokens = 2000, leadId = null, note = nu
     }
   }
 
-  const baseUrl = String(getSetting('ai.base_url', 'https://api.openai.com/v1') || '')
+  const baseUrl = String(getSetting('ai.base_url', 'https://api.openai.com/v1', db) || '')
     .trim().replace(/\/+$/, '');
   if (!/^https?:\/\//i.test(baseUrl)) {
     throw fail('INVALID_BASE_URL', 'ai.base_url must be an http(s) URL.');
   }
 
-  let model = getSetting(`ai.model.${task}`, '');
+  let model = getSetting(`ai.model.${task}`, '', db);
   if (!model || !String(model).trim()) {
-    model = getSetting('ai.model.default', 'gpt-4o-mini');
+    model = getSetting('ai.model.default', 'gpt-4o-mini', db);
   }
   model = String(model).trim();
   // Vision-capable default when the request includes screenshots / images.
   if (hasImages) {
-    const visionModel = getSetting('ai.model.vision', '');
+    const visionModel = getSetting('ai.model.vision', '', db);
     if (visionModel && String(visionModel).trim()) {
       model = String(visionModel).trim();
     } else if (/mini|nano|haiku/i.test(model)) {
@@ -171,8 +172,8 @@ async function chat({ task, messages, maxTokens = 2000, leadId = null, note = nu
   const usage = (data && data.usage) || {};
   const promptTokens = Number(usage.prompt_tokens) || 0;
   const completionTokens = Number(usage.completion_tokens) || 0;
-  const per1kPrompt = parseFloat(getSetting('cost.per_1k_prompt', '0.0015')) || 0;
-  const per1kCompletion = parseFloat(getSetting('cost.per_1k_completion', '0.002')) || 0;
+  const per1kPrompt = parseFloat(getSetting('cost.per_1k_prompt', '0.0015', db)) || 0;
+  const per1kCompletion = parseFloat(getSetting('cost.per_1k_completion', '0.002', db)) || 0;
   const costUsd = (promptTokens / 1000) * per1kPrompt + (completionTokens / 1000) * per1kCompletion;
 
   // Log every call. Note/note text never includes key material (callers must

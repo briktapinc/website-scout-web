@@ -20,6 +20,7 @@ const ROUTE_LABELS = {
 let currentUserIsSuperAdmin = false;
 let requireSubscription = false;
 let userSubscribed = true;
+let productAccess = true;
 let subscriptionStatus = 'none';
 const LEAD_STATUSES = ['new', 'researching', 'qualified', 'building', 'qa_pending', 'ready', 'outreach_pending',
   'contacted', 'engaged', 'claimed', 'trial', 'customer', 'lost'];
@@ -338,10 +339,10 @@ function mountPreview(host, renderFn) {
 
 function authHashMode() {
   const { route, param } = parseHash();
-  if (route === 'reset' && param) return { mode: 'reset', token: param };
-  if (route === 'invite' && param) return { mode: 'invite', token: param };
-  if (route === 'forgot') return { mode: 'forgot', token: '' };
-  return { mode: 'login', token: '' };
+  if (route === 'reset' && param) return { mode: 'reset', token: param, inviteToken: '' };
+  if (route === 'invite' && param) return { mode: 'login', token: '', inviteToken: param };
+  if (route === 'forgot') return { mode: 'forgot', token: '', inviteToken: '' };
+  return { mode: 'login', token: '', inviteToken: '' };
 }
 
 function renderAuth(forcedMode) {
@@ -350,7 +351,7 @@ function renderAuth(forcedMode) {
   const hashMode = authHashMode();
   let mode = forcedMode || hashMode.mode;
   const resetToken = hashMode.token;
-  const inviteToken = mode === 'invite' ? hashMode.token : '';
+  const inviteToken = hashMode.inviteToken || '';
 
   const inviteNote = inviteToken
     ? '<p class="hint">You were invited — sign in or register with the <strong>same email</strong> the invite was sent to, then we will join you to the workspace.</p>'
@@ -460,7 +461,7 @@ function renderAuth(forcedMode) {
         await api.resetPassword(resetToken, body.password);
         setMsg(msg, 'Password updated. You can log in.', 'ok');
         mode = 'login';
-        window.location.hash = '#/dashboard';
+        window.location.hash = '#/';
         paintMode();
         return;
       }
@@ -500,7 +501,7 @@ function updateBillingBanner() {
       <a href="#/billing">Open Billing</a>`;
     return;
   }
-  if (requireSubscription && !userSubscribed && !currentUserIsSuperAdmin) {
+  if (requireSubscription && !productAccess && !currentUserIsSuperAdmin) {
     el.classList.remove('hidden');
     el.innerHTML = `<strong>Subscription required.</strong> Subscribe to use Website Scout.
       <a href="#/billing">Go to Billing</a>`;
@@ -545,6 +546,9 @@ async function bootApp(meData) {
   userSubscribed = meData.subscribed != null
     ? !!meData.subscribed
     : !!(meData.user && meData.user.subscribed);
+  productAccess = meData.productAccess != null
+    ? !!meData.productAccess
+    : (userSubscribed || !!meData.workspaceSubscribed || currentUserIsSuperAdmin);
   subscriptionStatus = (meData.user && meData.user.subscriptionStatus) || 'none';
   const navAdmin = document.getElementById('nav-admin');
   if (navAdmin) navAdmin.classList.toggle('hidden', !currentUserIsSuperAdmin);
@@ -1588,7 +1592,7 @@ async function pageDesignDetail(id) {
           </div>
           <div class="inline">
             <button class="btn small" data-act="email-q">Email questions</button>
-            <button class="btn small" data-act="email-d" ${deliverable ? '' : 'disabled'}>Email delivery</button>
+            <button class="btn small" data-act="email-d" ${deliverable && job.type !== 'website' ? '' : 'disabled'} title="${job.type === 'website' ? 'Use preview/export for websites' : ''}">Email delivery</button>
             <span class="hint">${job.questions_emailed_at ? 'Questions emailed ' + esc(fmtDate(job.questions_emailed_at)) + '. ' : ''}${job.delivery_emailed_at ? 'Delivery emailed ' + esc(fmtDate(job.delivery_emailed_at)) + '.' : ''}</span>
           </div>
           <details style="margin-top:10px"><summary>Record a client reply</summary>
@@ -3029,6 +3033,8 @@ async function pageBilling(param, query) {
   }
   requireSubscription = !!summary.requireSubscription || requireSubscription;
   userSubscribed = !!summary.subscribed;
+  if (summary.productAccess != null) productAccess = !!summary.productAccess;
+  else productAccess = userSubscribed || currentUserIsSuperAdmin;
   subscriptionStatus = summary.subscriptionStatus || subscriptionStatus;
   updateBillingBanner();
 }
@@ -3063,23 +3069,25 @@ async function navigate() {
   Array.from(overlays).forEach((o) => o.close());
   let { route, param, query } = parseHash();
 
-  if (route === 'forgot' || route === 'reset' || route === 'invite') {
+  if (route === 'forgot' || route === 'reset') {
+    return renderAuth();
+  }
+  if (route === 'invite' && param) {
     if (shell.classList.contains('hidden')) return renderAuth();
-    if (route === 'invite' && param) {
-      try {
-        const inv = await api.acceptInvite(param);
-        if (inv.data && inv.data.workspaceId) {
-          api.setWorkspaceId(inv.data.workspaceId);
-          if (inv.data.workspaces) fillWorkspaces(inv.data.workspaces, inv.data.workspaceId);
-        }
-        toast('Invite accepted', 'ok');
-      } catch (err) { toast(err.message || 'Invite failed', 'err'); }
-      window.location.hash = '#/dashboard';
-      return;
-    }
+    try {
+      const inv = await api.acceptInvite(param);
+      if (inv.data && inv.data.workspaceId) {
+        api.setWorkspaceId(inv.data.workspaceId);
+        if (inv.data.workspaces) fillWorkspaces(inv.data.workspaces, inv.data.workspaceId);
+      }
+      if (inv.data && inv.data.productAccess != null) productAccess = !!inv.data.productAccess;
+      toast('Invite accepted', 'ok');
+    } catch (err) { toast(err.message || 'Invite failed', 'err'); }
+    window.location.hash = '#/dashboard';
+    return;
   }
 
-  const paywalled = requireSubscription && !userSubscribed && !currentUserIsSuperAdmin;
+  const paywalled = requireSubscription && !productAccess && !currentUserIsSuperAdmin;
   if (paywalled && route !== 'billing' && route !== 'admin') {
     window.location.hash = '#/billing';
     return;
@@ -3125,9 +3133,13 @@ if (wsSelect) {
   wsSelect.addEventListener('change', async () => {
     const id = Number(wsSelect.value);
     api.setWorkspaceId(id);
-    try { await api.selectWorkspace(id); } catch (err) { toast(err.message, 'err'); }
+    try {
+      const r = await api.selectWorkspace(id);
+      if (r.data && r.data.productAccess != null) productAccess = !!r.data.productAccess;
+      if (r.data && r.data.subscribed != null) userSubscribed = !!r.data.subscribed;
+    } catch (err) { toast(err.message, 'err'); }
     leadsState.selected.clear();
-    await refreshAutomation();
+    try { await refreshAutomation(); } catch { /* paywalled */ }
     navigate();
   });
 }

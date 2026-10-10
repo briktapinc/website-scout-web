@@ -13,6 +13,42 @@ const { rateLimit } = require('../rateLimit');
 const router = express.Router();
 const authLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 40 });
 
+function regenerateSession(req) {
+  return new Promise((resolve, reject) => {
+    if (!req.session || typeof req.session.regenerate !== 'function') return resolve();
+    req.session.regenerate((err) => (err ? reject(err) : resolve()));
+  });
+}
+
+async function authPayload(user, workspaceId, workspaces) {
+  const billing = require('../billing');
+  const subscribed = billing.isSubscribed(user);
+  const requireSubscription = await billing.requireSubscriptionEnabled();
+  const wsId = workspaceId || (workspaces[0] && workspaces[0].id) || null;
+  const workspaceSubscribed = wsId ? await billing.workspaceHasSubscription(wsId) : false;
+  const productAccess = subscribed || workspaceSubscribed;
+  const isSuperAdmin = Number(user.is_super_admin) === 1;
+  return {
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name || '',
+      created_at: user.created_at,
+      isSuperAdmin,
+      subscriptionStatus: user.subscription_status || 'none',
+      currentPeriodEnd: user.current_period_end || null,
+      subscribed,
+    },
+    workspaceId: wsId,
+    workspaces,
+    isSuperAdmin,
+    subscribed,
+    workspaceSubscribed,
+    productAccess,
+    requireSubscription,
+  };
+}
+
 router.post('/register', authLimit, async (req, res, next) => {
   try {
     const platform = require('../platform');
@@ -38,29 +74,19 @@ router.post('/register', authLimit, async (req, res, next) => {
     if (existing) return res.status(409).json({ ok: false, error: 'EMAIL_IN_USE' });
 
     const created = await createUserWithWorkspace({ email, password, name, workspaceName });
+    await regenerateSession(req);
     req.session.userId = created.userId;
     req.session.workspaceId = created.workspaceId;
     const workspaces = await listWorkspacesForUser(created.userId);
-    const billing = require('../billing');
-    const requireSub = await billing.requireSubscriptionEnabled();
-    res.json({
-      ok: true,
-      data: {
-        user: {
-          id: created.userId,
-          email: String(email).trim().toLowerCase(),
-          name: name || '',
-          isSuperAdmin: false,
-          subscriptionStatus: 'none',
-          subscribed: false,
-        },
-        workspaceId: created.workspaceId,
-        workspaces,
-        isSuperAdmin: false,
-        subscribed: false,
-        requireSubscription: requireSub,
-      },
-    });
+    const user = {
+      id: created.userId,
+      email: String(email).trim().toLowerCase(),
+      name: name || '',
+      is_super_admin: 0,
+      subscription_status: 'none',
+      status: 'active',
+    };
+    res.json({ ok: true, data: await authPayload(user, created.workspaceId, workspaces) });
   } catch (e) {
     next(e);
   }
@@ -75,7 +101,7 @@ router.post('/login', authLimit, async (req, res, next) => {
     if (!user) return res.status(401).json({ ok: false, error: 'INVALID_CREDENTIALS' });
     const ok = await bcrypt.compare(String(password || ''), user.password_hash);
     if (!ok) return res.status(401).json({ ok: false, error: 'INVALID_CREDENTIALS' });
-    if (String(user.status || 'active') === 'disabled') {
+    if (String(user.status || 'active') === 'disabled' || user.deleted_at) {
       return res.status(403).json({ ok: false, error: 'ACCOUNT_DISABLED' });
     }
     const isSuper = Number(user.is_super_admin) === 1;
@@ -84,30 +110,11 @@ router.post('/login', authLimit, async (req, res, next) => {
     }
 
     const workspaces = await listWorkspacesForUser(user.id);
+    await regenerateSession(req);
     req.session.userId = user.id;
     req.session.workspaceId = workspaces[0] ? workspaces[0].id : null;
     try { await require('../admin').touchLogin(user.id); } catch { /* ignore */ }
-    const billing = require('../billing');
-    const subscribed = billing.isSubscribed(user);
-    const requireSub = await billing.requireSubscriptionEnabled();
-    res.json({
-      ok: true,
-      data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          isSuperAdmin: isSuper,
-          subscriptionStatus: user.subscription_status || 'none',
-          subscribed,
-        },
-        workspaceId: req.session.workspaceId,
-        workspaces,
-        isSuperAdmin: isSuper,
-        subscribed,
-        requireSubscription: requireSub,
-      },
-    });
+    res.json({ ok: true, data: await authPayload(user, req.session.workspaceId, workspaces) });
   } catch (e) {
     next(e);
   }
@@ -139,7 +146,18 @@ router.post('/accept-invite', requireAuth, async (req, res, next) => {
     const result = await require('../invites').acceptInvite(token, req.session.userId);
     req.session.workspaceId = result.workspaceId;
     const workspaces = await listWorkspacesForUser(req.session.userId);
-    res.json({ ok: true, data: { ...result, workspaces } });
+    const billing = require('../billing');
+    const productAccess = await billing.workspaceHasSubscription(result.workspaceId)
+      || billing.isSubscribed(await billing.getUserBilling(req.session.userId));
+    res.json({
+      ok: true,
+      data: {
+        ...result,
+        workspaces,
+        productAccess,
+        workspaceSubscribed: await billing.workspaceHasSubscription(result.workspaceId),
+      },
+    });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message, code: e.code });
   }
@@ -147,6 +165,7 @@ router.post('/accept-invite', requireAuth, async (req, res, next) => {
 
 router.post('/logout', (req, res) => {
   req.session.destroy(() => {
+    res.clearCookie('scout.sid');
     res.clearCookie('connect.sid');
     res.json({ ok: true });
   });
@@ -165,31 +184,9 @@ router.get('/me', requireAuth, async (req, res, next) => {
     if (String(user.status || 'active') === 'disabled' || user.deleted_at) {
       return res.status(403).json({ ok: false, error: 'ACCOUNT_DISABLED' });
     }
-    const isSuperAdmin = Number(user.is_super_admin) === 1;
-    const billing = require('../billing');
-    const subscribed = billing.isSubscribed(user);
-    const requireSubscription = await billing.requireSubscriptionEnabled();
     const workspaces = await listWorkspacesForUser(user.id);
-    res.json({
-      ok: true,
-      data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          created_at: user.created_at,
-          isSuperAdmin,
-          subscriptionStatus: user.subscription_status || 'none',
-          currentPeriodEnd: user.current_period_end,
-          subscribed,
-        },
-        workspaceId: req.session.workspaceId || (workspaces[0] && workspaces[0].id) || null,
-        workspaces,
-        isSuperAdmin,
-        subscribed,
-        requireSubscription,
-      },
-    });
+    const workspaceId = req.session.workspaceId || (workspaces[0] && workspaces[0].id) || null;
+    res.json({ ok: true, data: await authPayload(user, workspaceId, workspaces) });
   } catch (e) {
     next(e);
   }
@@ -202,7 +199,20 @@ router.post('/workspace', requireAuth, async (req, res, next) => {
     const membership = await require('../workspace').getMembership(req.session.userId, workspaceId);
     if (!membership) return res.status(403).json({ ok: false, error: 'NOT_A_MEMBER' });
     req.session.workspaceId = workspaceId;
-    res.json({ ok: true, data: { workspaceId, workspace: membership } });
+    const billing = require('../billing');
+    const user = await billing.getUserBilling(req.session.userId);
+    const workspaceSubscribed = await billing.workspaceHasSubscription(workspaceId);
+    const productAccess = billing.isSubscribed(user) || workspaceSubscribed;
+    res.json({
+      ok: true,
+      data: {
+        workspaceId,
+        workspace: membership,
+        workspaceSubscribed,
+        productAccess,
+        subscribed: billing.isSubscribed(user),
+      },
+    });
   } catch (e) {
     next(e);
   }

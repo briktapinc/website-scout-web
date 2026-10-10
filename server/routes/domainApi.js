@@ -9,7 +9,7 @@ const domain = require('../domain');
 const { requireWorkspace, requireRole } = require('../middleware');
 
 const router = express.Router();
-router.use(requireWorkspace);
+// Workspace auth is applied at mount time in server.js (before paywall).
 
 function ok(res, data) { res.json({ ok: true, data }); }
 function fail(res, e, status = 400) {

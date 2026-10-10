@@ -82,17 +82,17 @@ app.get('/health', async (_req, res) => {
   }
 });
 
-const { requireSubscription } = require('./server/middleware');
+const { requireWorkspace, requireSubscription } = require('./server/middleware');
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/admin', adminRoutes);
 // Billing stays reachable without a paid plan (checkout / portal / delete).
 app.use('/api/v1/billing', billingRoutes);
 app.use('/api/v1/invites', inviteRoutes);
-// Product APIs + jobs require an active subscription when the platform flag is on.
-app.use('/api/v1/jobs', requireSubscription, jobsRoutes);
-app.use('/api/v1/mcp', requireSubscription, mcpAdminRoutes);
-app.use('/api/v1', requireSubscription, domainApi);
+// Resolve workspace first, then paywall (workspace owner plan covers members).
+app.use('/api/v1/jobs', requireWorkspace, requireSubscription, jobsRoutes);
+app.use('/api/v1/mcp', requireWorkspace, requireSubscription, mcpAdminRoutes);
+app.use('/api/v1', requireWorkspace, requireSubscription, domainApi);
 
 async function mcpHandler(req, res) {
   try {

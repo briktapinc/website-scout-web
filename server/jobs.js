@@ -234,11 +234,16 @@ async function tickDueJobs() {
 
 function startScheduler({ intervalMs = 30000 } = {}) {
   let timer = null;
+  let running = false;
   const tick = async () => {
+    if (running) return;
+    running = true;
     try {
       await tickDueJobs();
     } catch (e) {
       console.error('[scheduler]', e.message);
+    } finally {
+      running = false;
     }
   };
   timer = setInterval(tick, intervalMs);

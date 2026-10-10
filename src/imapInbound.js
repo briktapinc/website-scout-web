@@ -106,6 +106,7 @@ async function processMessage(db, { fromEmail, subject, body, messageId, uid, ma
   const actions = [];
   const jobId = emailRedesign.extractJobId(subject, body);
   if (!jobId) {
+    markSeen(db, messageId, mailbox, uid, [{ type: 'no_job_reference' }]);
     return { ok: false, skipped: true, reason: 'no_job_reference', subject };
   }
 
@@ -113,6 +114,7 @@ async function processMessage(db, { fromEmail, subject, body, messageId, uid, ma
   try {
     job = design.getJob(db, jobId);
   } catch {
+    markSeen(db, messageId, mailbox, uid, [{ type: 'job_not_found', jobId }]);
     return { ok: false, skipped: true, reason: 'job_not_found', jobId, subject };
   }
 
@@ -129,12 +131,10 @@ async function processMessage(db, { fromEmail, subject, body, messageId, uid, ma
     }
   }
 
-  // 2) Change / redesign / improvements → queue for agent
+  // 2) Only queue redesign/improve when the email looks like a change request.
   const looksLikeChange = emailRedesign.looksLikeRedesignRequest(subject, body);
   const websiteReady = job.type === 'website' && !!job.deliverable;
-  const answeredQuestions = actions.some((a) => a.type === 'record_reply');
-  // Don't treat pure Q&A replies as redesigns; otherwise queue change work.
-  if (looksLikeChange || (websiteReady && !answeredQuestions)) {
+  if (looksLikeChange) {
     const ingest = emailRedesign.ingestInboundEmail(db, {
       fromEmail,
       subject,
@@ -142,7 +142,6 @@ async function processMessage(db, { fromEmail, subject, body, messageId, uid, ma
       designJobId: jobId,
       source: 'imap',
       force: true,
-      requestKind: looksLikeChange ? undefined : 'improvements',
     });
     if (ingest.ok && ingest.request) {
       actions.push({ type: 'ingest', requestId: ingest.request.id, requestKind: ingest.request.request_kind });
@@ -156,6 +155,7 @@ async function processMessage(db, { fromEmail, subject, body, messageId, uid, ma
             requestId: ingest.request.id,
             jobId,
             status: submitted.job && submitted.job.status,
+            interpreted: !!(submitted.interpreted && submitted.interpreted.usedAi),
           });
         } catch (e) {
           actions.push({ type: 'submit_error', error: e.message, code: e.code });
@@ -164,6 +164,10 @@ async function processMessage(db, { fromEmail, subject, body, messageId, uid, ma
     } else if (ingest.skipped) {
       actions.push({ type: 'ingest_skipped', reason: ingest.reason });
     }
+  } else if (!actions.length) {
+    actions.push({ type: 'ignored', reason: 'no_questions_and_not_a_change_request' });
+    markSeen(db, messageId, mailbox, uid, actions);
+    return { ok: true, skipped: true, reason: 'not_actionable', jobId, subject, fromEmail, actions };
   }
 
   markSeen(db, messageId, mailbox, uid, actions);
@@ -245,10 +249,12 @@ async function pollMailbox(db, opts = {}) {
             autoSubmit: cfg.autoSubmit,
           });
           results.push({ uid, ...out });
+          // Only mark IMAP Seen after durable processing (or intentional skip).
+          try { await client.messageFlagsAdd({ uid }, ['\\Seen']); } catch { /* ignore */ }
         } catch (e) {
+          // Leave unseen so the next poll can retry.
           results.push({ ok: false, uid, subject, error: e.message, code: e.code });
         }
-        try { await client.messageFlagsAdd({ uid }, ['\\Seen']); } catch { /* ignore */ }
       }
     } finally {
       lock.release();

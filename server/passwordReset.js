@@ -42,11 +42,14 @@ async function requestReset(email) {
     emailed = true;
   } catch (e) {
     if (e.code === 'SMTP_NOT_CONFIGURED') {
-      // Dev/ops fallback when SMTP missing
-      devLink = link;
+      // Only expose the link outside production when SMTP is not configured.
+      if (process.env.NODE_ENV !== 'production' || process.env.DEV_RETURN_RESET_LINK === '1') {
+        devLink = link;
+      } else {
+        console.warn('[passwordReset] SMTP not configured; reset link not returned in production');
+      }
     } else {
       console.warn('[passwordReset] email:', e.message);
-      devLink = link;
     }
   }
   return { ok: true, emailed, ...(devLink ? { resetLink: devLink } : {}) };

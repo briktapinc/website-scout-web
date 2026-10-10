@@ -22,11 +22,25 @@ async function getUserBilling(userId) {
 function isSubscribed(user) {
   if (!user) return false;
   if (Number(user.is_super_admin) === 1) return true;
+  if (String(user.status || 'active') === 'disabled' || user.deleted_at) return false;
   return ACTIVE_STATUSES.has(String(user.subscription_status || ''));
 }
 
 async function requireSubscriptionEnabled() {
   return (await platform.getPlatformSetting('billing.require_subscription', '1')) === '1';
+}
+
+/** True if any owner/admin of the workspace has an active (or trialing/past_due) plan. */
+async function workspaceHasSubscription(workspaceId) {
+  if (!workspaceId) return false;
+  const members = await query(
+    `SELECT u.id, u.is_super_admin, u.subscription_status, u.status, u.deleted_at
+     FROM workspace_members m
+     JOIN users u ON u.id = m.user_id
+     WHERE m.workspace_id = :workspaceId AND m.role IN ('owner','admin')`,
+    { workspaceId: Number(workspaceId) }
+  );
+  return (members || []).some((u) => isSubscribed(u));
 }
 
 async function ensureCustomer(user) {
@@ -449,6 +463,7 @@ module.exports = {
   getUserBilling,
   isSubscribed,
   requireSubscriptionEnabled,
+  workspaceHasSubscription,
   ensureCustomer,
   createCheckoutSession,
   createPortalSession,

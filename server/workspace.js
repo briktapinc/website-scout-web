@@ -73,7 +73,8 @@ async function createUserWithWorkspace({ email, password, name, workspaceName })
 
 async function findUserByEmail(email) {
   const rows = await query(
-    `SELECT id, email, password_hash, name, is_super_admin, status, last_login_at, created_at
+    `SELECT id, email, password_hash, name, is_super_admin, status, last_login_at, created_at,
+            subscription_status, current_period_end, deleted_at, stripe_customer_id
      FROM users WHERE email = :email LIMIT 1`,
     { email: String(email || '').trim().toLowerCase() }
   );

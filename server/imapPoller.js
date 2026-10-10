@@ -57,11 +57,16 @@ async function tickAll() {
 function startImapPoller({ intervalMs } = {}) {
   const ms = Number(intervalMs) || Number(process.env.IMAP_POLL_MS) || 120000;
   let timer = null;
+  let running = false;
   const tick = async () => {
+    if (running) return;
+    running = true;
     try {
       await tickAll();
     } catch (e) {
       console.error('[imapPoller]', e.message);
+    } finally {
+      running = false;
     }
   };
   timer = setInterval(tick, ms);
