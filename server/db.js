@@ -145,7 +145,7 @@ async function ensureColumnMysql(conn, table, column, definition) {
     [table, column]
   );
   if (Number(rows[0].c) === 0) {
-    await conn.query(`ALTER TABLE \`${table}\` ADD COLUMN ${definition}`);
+    await conn.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`);
   }
 }
 
