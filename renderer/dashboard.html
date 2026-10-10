@@ -1,0 +1,39 @@
+<div class="page-head">
+  <div>
+    <h1>Dashboard</h1>
+    <p class="lede">Leads, sites, outreach, and today’s AI spend in one place.</p>
+  </div>
+  <button id="emergency-stop" class="btn danger">Emergency stop</button>
+</div>
+
+<div id="automation-banner" class="alert warn" style="display:none;">
+  <strong>Automation is paused.</strong> No AI or outreach jobs will run until it is resumed.
+  <button id="resume-btn" class="btn ok" style="margin-left:12px;">Resume automation</button>
+</div>
+
+<div class="grid cols-4" id="stat-cards" style="margin-bottom:16px;">
+  <div class="card stat-card"><div class="stat-label">Leads</div><div class="stat-value" id="stat-leads">–</div></div>
+  <div class="card stat-card"><div class="stat-label">Qualified</div><div class="stat-value" id="stat-qualified">–</div></div>
+  <div class="card stat-card"><div class="stat-label">Websites generated</div><div class="stat-value" id="stat-websites">–</div></div>
+  <div class="card stat-card"><div class="stat-label">Emails sent</div><div class="stat-value" id="stat-emails">–</div></div>
+  <div class="card stat-card"><div class="stat-label">Hot leads</div><div class="stat-value" id="stat-hot">–</div></div>
+  <div class="card stat-card"><div class="stat-label">AI cost today</div><div class="stat-value" id="stat-cost-today">–</div></div>
+  <div class="card stat-card"><div class="stat-label">AI cost this month</div><div class="stat-value" id="stat-cost-month">–</div></div>
+  <div class="card stat-card"><div class="stat-label">Automation</div><div class="stat-value" id="stat-automation">–</div></div>
+</div>
+
+<div class="grid cols-2">
+  <div class="card">
+    <h2>Recent activity</h2>
+    <ul class="list" id="activity-list"><li class="muted">Loading…</li></ul>
+  </div>
+  <div class="card">
+    <h2>Automation controls</h2>
+    <p class="muted">Pause or resume all background AI work: discovery, research, scoring, generation, and outreach.</p>
+    <p>
+      <button id="pause-btn" class="btn">Pause automation</button>
+      <button id="resume-btn-2" class="btn ok">Resume automation</button>
+    </p>
+    <p class="muted" id="automation-status">Checking…</p>
+  </div>
+</div>

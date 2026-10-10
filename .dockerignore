@@ -1,0 +1,14 @@
+node_modules
+data
+.git
+.env
+*.log
+main.js
+preload.js
+renderer
+src
+CONTRACT.md
+PATCHES.md
+Website Scout.lnk
+*.sqlite
+agent-transcripts

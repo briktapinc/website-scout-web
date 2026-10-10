@@ -1,0 +1,197 @@
+<div class="ws" id="dj-root">
+  <div id="dj-list">
+    <div class="page-head">
+      <div>
+        <h1>Design</h1>
+        <p class="lede">Describe the work. An MCP agent does the build, and can ask questions first. Websites are one kind of delivery. After you assign a job, connect an MCP client (<a href="#/mcp">MCP page</a>) and call <code>design.next</code> or <code>design.pending</code> — the app does not push to stdio clients automatically.</p>
+      </div>
+      <div class="page-actions">
+        <button type="button" class="btn primary" id="dj-new-open">New job</button>
+      </div>
+    </div>
+
+    <div id="dj-new-modal" class="modal" hidden>
+      <div class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="dj-new-heading">
+        <h2 id="dj-new-heading">New job</h2>
+        <div class="field" id="dj-kinds-field">
+          <label>Kind</label>
+          <div id="dj-kind-toggles" class="kind-toggles" role="group" aria-label="Suggested kinds"></div>
+          <div class="row" style="align-items:flex-end;margin-top:8px">
+            <div class="field" style="flex:1;margin:0">
+              <label for="dj-type-custom">Or any other kind</label>
+              <input id="dj-type-custom" type="text" maxlength="40" placeholder="packaging, menu, …">
+            </div>
+            <button type="button" class="btn" id="dj-kind-add">Add to list</button>
+          </div>
+          <ol id="dj-kind-priority" class="kind-priority" aria-label="Kind priority order"></ol>
+          <p class="hint">Select one or more. Top of the priority list = first job created. Use ↑ ↓ to reorder.</p>
+        </div>
+        <div class="field lead-picker" id="dj-lead-picker">
+          <label for="dj-lead-search">Lead search</label>
+          <input id="dj-lead-search" type="search" autocomplete="off" placeholder="Search by business name, city, category, or group…" />
+          <input id="dj-lead" type="hidden" value="" />
+          <div id="dj-lead-selected" class="lead-picker-selected" hidden></div>
+          <ul id="dj-lead-results" class="lead-picker-results" hidden></ul>
+          <p class="hint">Pick a lead so the agent gets verified facts and site snapshot. Leave empty for a freeform job.</p>
+        </div>
+        <div class="field">
+          <label for="dj-title">Title</label>
+          <input id="dj-title" type="text" maxlength="200" placeholder="Spring logo for North Bakery">
+        </div>
+        <div class="field">
+          <label for="dj-instructions">Instructions for the agent</label>
+          <textarea id="dj-instructions" rows="10" maxlength="8000" placeholder="Loading default website instructions…"></textarea>
+          <p class="hint">Website jobs start with a built-in default you can edit. Other kinds: clear or rewrite as needed.</p>
+        </div>
+        <div class="field" id="dj-shape-field">
+          <label for="dj-site-shape">Site shape</label>
+          <select id="dj-site-shape">
+            <option value="landing">Landing page — one focused scrollable page</option>
+            <option value="multipage" selected>Multi-page site — full IA (home, services, about, …)</option>
+          </select>
+          <p class="hint">For website jobs. Landing collapses research into sections; multi-page maps recommended_pages.</p>
+        </div>
+        <p class="hint" id="dj-create-msg"></p>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="dj-new-close">Cancel</button>
+          <button type="button" class="btn primary" id="dj-create">Assign to agent</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Title</th><th>Kind</th><th>Status</th><th>Questions</th><th>Updated</th><th></th></tr></thead>
+        <tbody id="dj-body"><tr><td colspan="6" class="hint">Loading…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <button id="dj-prev" class="btn" type="button">Previous</button>
+      <span id="dj-page-info"></span>
+      <button id="dj-next" class="btn" type="button">Next</button>
+      <select id="dj-pagesize" aria-label="Page size">
+        <option value="10">10</option>
+        <option value="25" selected>25</option>
+        <option value="50">50</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="dj-detail" hidden>
+    <div class="toolbar">
+      <button class="btn" id="dj-back">All jobs</button>
+      <h2 id="dj-title" style="margin:0"></h2>
+      <span id="dj-status"></span>
+      <span style="flex:1"></span>
+      <button class="btn" id="dj-photos">Add photos</button>
+      <button class="btn" id="dj-gen-image">Generate image</button>
+      <button class="btn" id="dj-browser">Open in browser</button>
+      <button class="btn" id="dj-review" hidden>Review site</button>
+      <button class="btn primary" id="dj-redesign" hidden>Request redesign</button>
+      <button class="btn" id="dj-improve" hidden>Request improvements</button>
+      <button class="btn primary" id="dj-save">Save block edits</button>
+    </div>
+    <p class="hint" id="dj-built"></p>
+    <p class="hint" id="dj-pexels"></p>
+    <p class="hint" id="dj-action-msg"></p>
+
+    <div class="panel">
+      <details class="dj-brief-fold">
+        <summary>Brief</summary>
+        <div class="field" id="dj-detail-shape-field" hidden>
+          <label for="dj-detail-site-shape">Site shape</label>
+          <select id="dj-detail-site-shape">
+            <option value="landing">Landing page</option>
+            <option value="multipage">Multi-page site</option>
+          </select>
+          <button class="btn" type="button" id="dj-save-shape" style="margin-top:8px">Save site shape</button>
+        </div>
+        <div id="dj-brief" class="hint">Loading…</div>
+      </details>
+    </div>
+    <div class="panel">
+      <h3>Questions for this project</h3>
+      <div class="row">
+        <div class="field">
+          <label for="dj-contact">Email these questions to</label>
+          <input id="dj-contact" type="email" placeholder="owner@business.example">
+        </div>
+        <button class="btn" id="dj-save-contact">Save contact</button>
+        <button class="btn primary" id="dj-email-q">Email questions</button>
+      </div>
+      <p class="hint" id="dj-emailed">Not emailed yet.</p>
+      <div id="dj-questions" class="hint">None yet.</div>
+      <h3>Paste an email reply</h3>
+      <p class="hint">Replies are not read from a mailbox. Paste the reply for this project. It is stored on this job only, with the from address and the time.</p>
+      <div class="field">
+        <label for="dj-reply-from">From</label>
+        <input id="dj-reply-from" type="email" placeholder="owner@business.example">
+      </div>
+      <div class="field">
+        <label for="dj-reply">Reply</label>
+        <textarea id="dj-reply" rows="3" placeholder="Paste the email reply"></textarea>
+      </div>
+      <button class="btn" id="dj-reply-save">Save reply on this job</button>
+    </div>
+    <div class="panel" id="dj-review-panel" hidden>
+      <h3>Review, redesign &amp; improvements</h3>
+      <p class="hint">Captures mobile/desktop screenshots (desktop app), runs QA + vision review, and fills <strong>two</strong> instruction buckets: <em>redesign</em> (full visual/IA rethink) and <em>improvements</em> (copy, CTA, mobile, imagery polish). Queue them separately via <code>design.redesign</code> or <code>design.improve</code>; agents claim with <code>design.next</code>.</p>
+      <p class="hint"><strong>Request redesign</strong> / <strong>Request improvements</strong> set the job to <code>waiting_on_agent</code>, write a trigger file (<code>reason: redesign</code> or <code>reason: improvements</code>), notify if enabled, and run your optional Settings → Design agent trigger command. Trigger failures are logged and do not block the queue.</p>
+      <div id="dj-review-shots" class="review-shots" hidden></div>
+      <p id="dj-review-summary" class="hint"></p>
+      <ul id="dj-review-issues"></ul>
+      <div class="field">
+        <label for="dj-redesign-instructions">Redesign instructions (full rethink)</label>
+        <textarea id="dj-redesign-instructions" rows="8" maxlength="6000" placeholder="Run Review site for a fuller redesign pass, or write your own…"></textarea>
+      </div>
+      <div class="field">
+        <label for="dj-improve-instructions">Improvements instructions (incremental polish)</label>
+        <textarea id="dj-improve-instructions" rows="6" maxlength="6000" placeholder="Copy tweaks, CTA, mobile sizing, imagery — not a full redesign…"></textarea>
+      </div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <button class="btn" type="button" id="dj-review-run">Review site</button>
+        <button class="btn primary" type="button" id="dj-redesign-send">Request redesign</button>
+        <button class="btn" type="button" id="dj-improve-send">Request improvements</button>
+      </div>
+      <h3 style="margin-top:1.25rem">Email change requests</h3>
+      <p class="hint">Inbound mailbox is not connected. Paste a client email here, or drop <code>.eml</code>/<code>.txt</code> into the inbound-email folder. Kind is detected as <code>redesign</code> or <code>improvements</code> (or pick below). Submit queues the matching agent path (<code>waiting_on_agent</code>).</p>
+      <div id="dj-email-redesign-list" class="hint">No pending email change requests.</div>
+      <div class="field">
+        <label for="dj-er-from">From</label>
+        <input id="dj-er-from" type="email" placeholder="owner@business.example">
+      </div>
+      <div class="field">
+        <label for="dj-er-subject">Subject</label>
+        <input id="dj-er-subject" type="text" placeholder="Re: Design job #… redesign or improvements">
+      </div>
+      <div class="field">
+        <label for="dj-er-kind">Request kind</label>
+        <select id="dj-er-kind">
+          <option value="">Auto-detect from email</option>
+          <option value="redesign">Redesign (full rethink)</option>
+          <option value="improvements">Improvements (polish)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="dj-er-body">Email body</label>
+        <textarea id="dj-er-body" rows="4" maxlength="12000" placeholder="Paste the client request email…"></textarea>
+      </div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <button class="btn" type="button" id="dj-er-save">Save email request</button>
+        <button class="btn" type="button" id="dj-er-scan">Scan inbound drop folder</button>
+      </div>
+      <p class="hint" id="dj-er-drop"></p>
+    </div>
+    <div class="panel" id="dj-delivery">
+      <h3>Delivery</h3>
+      <div id="dj-delivery-body" class="hint">Waiting on the agent.</div>
+    </div>
+    <div class="panel" id="dj-site" hidden>
+      <h3>Website the agent submitted</h3>
+      <p class="hint">Each tab is a real page. Open in browser exports separate HTML files. Freeform agent HTML is saved as-is.</p>
+      <div id="dj-page-tabs" class="row gap" style="margin-bottom:10px;flex-wrap:wrap"></div>
+      <div class="preview-frame desktop"><iframe id="dj-preview" title="Website preview" sandbox="allow-same-origin allow-scripts"></iframe></div>
+      <div id="dj-blocks"></div>
+    </div>
+  </div>
+</div>

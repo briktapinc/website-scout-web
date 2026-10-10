@@ -1,0 +1,132 @@
+<!-- outreach.html — Outreach page fragment. Loaded into #view by the shell router; companion outreach.js wires it up. -->
+<div id="outreach-root" class="page">
+  <div class="page-head">
+    <div>
+      <h1>Outreach</h1>
+      <p class="lede">Campaigns, templates, the send queue, and the suppression list.</p>
+    </div>
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="campaigns">Campaigns</button>
+      <button class="tab" data-tab="templates">Templates</button>
+      <button class="tab" data-tab="queue">Queue</button>
+      <button class="tab" data-tab="compliance">Compliance</button>
+    </div>
+  </div>
+
+  <!-- Campaigns tab -->
+  <section id="tab-campaigns" class="tab-panel">
+    <div class="toolbar">
+      <button id="btn-new-campaign" class="btn primary">+ New campaign</button>
+      <span id="campaigns-summary" class="muted"></span>
+    </div>
+    <div class="table-wrap">
+    <table class="data" id="campaigns-table">
+      <thead><tr>
+        <th>Name</th><th>Status</th><th>Rate/hr</th>
+        <th>Queued</th><th>Sent</th><th>Failed</th><th>Suppressed</th><th>Created</th><th></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    </div>
+    <div class="pagination">
+      <button id="camp-prev" class="btn" type="button">Previous</button>
+      <span id="camp-page-info"></span>
+      <button id="camp-next" class="btn" type="button">Next</button>
+      <select id="camp-pagesize" aria-label="Page size">
+        <option value="10">10</option>
+        <option value="25" selected>25</option>
+        <option value="50">50</option>
+      </select>
+    </div>
+    <div id="campaign-detail" class="card hidden">
+      <h3 id="campaign-detail-title"></h3>
+      <table class="data" id="campaign-messages-table">
+        <thead><tr><th>To</th><th>Lead</th><th>Subject</th><th>Status</th><th>Scheduled</th><th>Sent</th><th>Error</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="pagination">
+        <button id="msg-prev" class="btn" type="button">Previous</button>
+        <span id="msg-page-info"></span>
+        <button id="msg-next" class="btn" type="button">Next</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Templates tab -->
+  <section id="tab-templates" class="tab-panel hidden">
+    <div class="toolbar">
+      <button id="btn-new-template" class="btn primary">+ New template</button>
+    </div>
+    <div class="table-wrap">
+    <table class="data" id="templates-table">
+      <thead><tr><th>Name</th><th>Subject</th><th>Created</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    </div>
+    <p class="muted hint">Available variables (substituted from verified lead facts only — unknown values render empty, never invented):
+      <code>{{business_name}}</code> <code>{{category}}</code> <code>{{phone}}</code>
+      <code>{{email}}</code> <code>{{website}}</code> <code>{{address}}</code>
+      <code>{{city}}</code> <code>{{state}}</code> <code>{{postal_code}}</code>
+      <code>{{rating}}</code> <code>{{review_count}}</code> <code>{{hours}}</code>
+      <code>{{services}}</code> <code>{{preview_path}}</code> <code>{{from_name}}</code>
+    </p>
+  </section>
+
+  <!-- Queue tab -->
+  <section id="tab-queue" class="tab-panel hidden">
+    <div class="stats-cards" id="queue-stats"></div>
+    <div class="toolbar">
+      <button id="btn-process-queue" class="btn primary">Process now</button>
+      <span id="queue-result" class="muted"></span>
+    </div>
+    <p class="muted hint">Sends due messages for active campaigns. Honors the pause switch, the suppression list, and the daily outreach cap. Open/click tracking is best-effort — record engagement manually on the lead's intent tab.</p>
+  </section>
+
+  <!-- Compliance tab -->
+  <section id="tab-compliance" class="tab-panel hidden">
+    <h3>Suppression list</h3>
+    <p class="muted">Unsubscribed, bounced, complained, or do-not-contact addresses. Suppressed addresses are never emailed — including messages already queued.</p>
+    <div class="toolbar form-inline">
+      <input id="sup-email" type="email" placeholder="email@example.com" />
+      <select id="sup-reason">
+        <option value="do-not-contact">do-not-contact</option>
+        <option value="unsubscribed">unsubscribed</option>
+        <option value="bounced">bounced</option>
+        <option value="complaint">complaint</option>
+      </select>
+      <button id="btn-sup-add" class="btn">Add</button>
+    </div>
+    <div class="table-wrap">
+    <table class="data" id="suppression-table">
+      <thead><tr><th>Email</th><th>Reason</th><th>Added</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    </div>
+    <div class="pagination">
+      <button id="sup-prev" class="btn" type="button">Previous</button>
+      <span id="sup-page-info"></span>
+      <button id="sup-next" class="btn" type="button">Next</button>
+      <select id="sup-pagesize" aria-label="Page size">
+        <option value="25">25</option>
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+      </select>
+    </div>
+
+    <h3>Legal footer</h3>
+    <p class="muted">Appended to every campaign email (settings key <code>mail.footer</code>).</p>
+    <textarea id="mail-footer" rows="5" cols="80" placeholder="Your business name&#10;Street address&#10;Unsubscribe: reply with STOP"></textarea>
+    <div class="toolbar"><button id="btn-footer-save" class="btn primary">Save footer</button>
+      <span id="footer-status" class="muted"></span></div>
+
+    <h3>Notes</h3>
+    <ul class="muted">
+      <li>Every campaign email includes the footer above. Honor unsubscribe requests by adding the address here.</li>
+      <li>Do-not-contact requests must be added to the suppression list immediately.</li>
+      <li>Never contact a prospect who opted out — the queue checks this list before every send.</li>
+    </ul>
+  </section>
+
+  <!-- Modal root -->
+  <div id="outreach-modal" class="modal hidden"><div class="modal-box" id="outreach-modal-box"></div></div>
+</div>

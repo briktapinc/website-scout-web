@@ -1,0 +1,355 @@
+<div class="settings">
+  <h1>Settings</h1>
+  <p class="lede">Provider keys, spend limits, prompts, email, and the kill switch. Secrets stay on this machine and are never shown again after you save them. The <a href="#/mcp">MCP page</a> has the stdio connection for any MCP client, and every tool.</p>
+
+  <div class="settings-layout">
+    <nav class="settings-nav" aria-label="Settings sections">
+      <a href="#sec-ai">AI</a>
+      <a href="#sec-cost">Cost</a>
+      <a href="#sec-prompts">Prompts</a>
+      <a href="#sec-automation">Automation</a>
+      <a href="#sec-design-agent">Design agent</a>
+      <a href="#sec-design-learning">Design learning</a>
+      <a href="#sec-discovery-schedule">Discovery schedule</a>
+      <a href="#sec-smtp">Email</a>
+      <a href="#sec-cloudflare">Cloudflare</a>
+      <a href="#sec-photos">Photos</a>
+      <a href="#sec-mail">Footer</a>
+    </nav>
+
+    <div>
+  <section id="sec-ai">
+    <h2>AI provider</h2>
+    <div class="sub">The API key is stored locally and never displayed. Each task can use its own model; a blank row uses the default.</div>
+    <div class="spend" id="spend">AI spend — today: … · this month: …</div>
+    <div class="field">
+      <label for="ai-key">API key</label>
+      <input type="password" id="ai-key" autocomplete="new-password" placeholder="sk-… (never shown after saving)">
+      <div class="row" style="margin-top:8px">
+        <button class="btn primary" id="ai-key-save">Save key</button>
+        <span class="msg" id="ai-key-msg"></span>
+      </div>
+      <div class="hint" id="ai-key-status"></div>
+    </div>
+    <div class="field">
+      <label for="ai-base-url">Base URL</label>
+      <input type="text" id="ai-base-url" data-setting="ai.base_url">
+    </div>
+    <div class="field">
+      <label>Model routing</label>
+      <table class="models" id="model-table">
+        <tr><th>Task</th><th>Model (blank = default)</th></tr>
+      </table>
+    </div>
+    <button class="btn primary" id="ai-save">Save AI settings</button>
+    <span class="msg" id="ai-msg"></span>
+  </section>
+
+  <section id="sec-cost">
+    <h2>Cost controls</h2>
+    <div class="sub">Hard stops for AI spend and how much the app can produce in a day.</div>
+    <div class="row">
+      <div class="field"><label for="cost-budget">Daily AI budget (USD)</label><input type="number" id="cost-budget" data-setting="cost.daily_budget_usd" min="0" step="0.5"></div>
+      <div class="field"><label for="cost-sites">Max websites / day</label><input type="number" id="cost-sites" data-setting="cost.max_websites_per_day" min="0" step="1"></div>
+      <div class="field"><label for="cost-outreach">Max outreach emails / day</label><input type="number" id="cost-outreach" data-setting="cost.max_outreach_per_day" min="0" step="1"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label for="cost-prompt">Cost per 1k prompt tokens (USD)</label><input type="number" id="cost-prompt" data-setting="cost.per_1k_prompt" min="0" step="0.0001"></div>
+      <div class="field"><label for="cost-completion">Cost per 1k completion tokens (USD)</label><input type="number" id="cost-completion" data-setting="cost.per_1k_completion" min="0" step="0.0001"></div>
+    </div>
+    <button class="btn primary" id="cost-save">Save cost controls</button>
+    <span class="msg" id="cost-msg"></span>
+  </section>
+
+  <section id="sec-prompts">
+    <h2>Prompt library</h2>
+    <div class="sub">System prompts for each AI task. Restore brings back the shipped default.</div>
+    <div class="row">
+      <div class="field" style="max-width:280px">
+        <label for="prompt-select">Prompt</label>
+        <select id="prompt-select"></select>
+      </div>
+    </div>
+    <div class="field">
+      <label for="prompt-body">Body</label>
+      <textarea id="prompt-body" rows="10" style="max-width:100%"></textarea>
+    </div>
+    <button class="btn primary" id="prompt-save">Save prompt</button>
+    <button class="btn" id="prompt-reset">Restore default</button>
+    <span class="msg" id="prompt-msg"></span>
+  </section>
+
+  <section id="sec-automation">
+    <h2>Automation</h2>
+    <div class="sub">Pause stops scanning, generation, campaigns, follow-ups, scheduled lead discovery, and AI actions without closing the app.</div>
+    <div class="field">
+      <div style="margin-bottom:12px">Status: <strong id="auto-status">…</strong></div>
+      <button class="btn" id="auto-toggle">Pause / Resume</button>
+      <span class="msg" id="auto-msg"></span>
+    </div>
+    <div class="field" style="margin-top:20px">
+      <button class="big-danger" id="emergency-stop">Emergency stop</button>
+      <div class="hint" style="margin-top:8px">Pauses every automated job and writes an audit entry. You confirm twice.</div>
+    </div>
+  </section>
+
+  <section id="sec-design-agent">
+    <h2>Design agent trigger</h2>
+    <div class="sub">When a design job becomes <code>waiting_on_agent</code> (new assign, redesign, improvements, or questions answered), the app always writes a JSON trigger file and can ping you or run a shell command. Filter on <code>reason</code>: <code>assigned</code>, <code>redesign</code>, <code>improvements</code>, <code>questions_answered</code>. The webhook below fires only when a redesign or improvements request is submitted. Failures are logged and never block the queue.</div>
+    <div class="field">
+      <label for="design-agent-notify">Desktop notification</label>
+      <select id="design-agent-notify" data-setting="design.agent_notify">
+        <option value="1">On</option>
+        <option value="0">Off</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="design-agent-cmd">Trigger command (optional)</label>
+      <input type="text" id="design-agent-cmd" data-setting="design.agent_trigger_command" placeholder='e.g. powershell -Command "Write-Host job {{job_id}}"'>
+      <div class="hint">Placeholders: <code>{{job_id}}</code>, <code>{{reason}}</code>, <code>{{status}}</code>, <code>{{message}}</code>. Also sets env <code>WS_DESIGN_JOB_ID</code>, <code>WS_DESIGN_REASON</code>. Use a watcher script or anything that wakes your MCP agent. Leave blank to skip.</div>
+    </div>
+    <div class="field">
+      <label for="design-agent-webhook">Webhook URL (optional)</label>
+      <input type="url" id="design-agent-webhook" data-setting="design.agent_webhook_url" placeholder="https://example.com/hooks/design-agent">
+      <div class="hint">POSTed as JSON only when redesign or improvements is queued (<code>reason</code>: <code>redesign</code> | <code>improvements</code>). Body includes <code>job_id</code>, <code>request_kind</code>, <code>reason</code>, <code>status</code>, <code>title</code>, <code>timestamp</code>. Leave blank to skip. Failures go to the activity log and never block the queue.</div>
+    </div>
+    <div class="field">
+      <label for="design-agent-webhook-secret">Webhook secret (optional)</label>
+      <input type="password" id="design-agent-webhook-secret" data-setting="design.agent_webhook_secret" placeholder="(optional shared secret)" autocomplete="off">
+      <div class="hint">When set, sent as <code>Authorization: Bearer …</code> and <code>X-Webhook-Secret</code>. Leave blank for no auth header.</div>
+    </div>
+    <div class="field">
+      <label for="design-agent-file">Trigger file path (optional)</label>
+      <input type="text" id="design-agent-file" data-setting="design.agent_trigger_file" placeholder="(default: next to the app database)">
+      <div class="hint">Default is <code>design-agent-trigger.json</code> beside the SQLite DB. Watch this file or read it after a redesign / improvements send.</div>
+    </div>
+    <button class="btn primary" id="design-agent-save">Save design agent trigger</button>
+    <span class="msg" id="design-agent-msg"></span>
+  </section>
+
+  <section id="sec-design-learning">
+    <h2>Design learning</h2>
+    <div class="sub">The app records reviews, screenshots metadata, redesign/improve requests, <strong>inbound email messages</strong> (paste/drop as soon as saved, plus submit), and delivers into an event log, then distills a short playbook. New design briefs include <code>learned_lessons</code> (including client email feedback) so the MCP agent can improve craft without inventing business facts. Works without AI (heuristic bullets); with an API key it can summarize.</div>
+    <div class="field">
+      <label for="design-learning-enabled">Learning</label>
+      <select id="design-learning-enabled" data-setting="design.learning.enabled">
+        <option value="1">On</option>
+        <option value="0">Off</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="design-learning-max">Max playbook lessons</label>
+      <input type="number" id="design-learning-max" data-setting="design.learning.max_playbook" min="4" max="60" step="1" value="24">
+    </div>
+    <p class="hint" id="design-learning-meta">Last learned: — · Events: — · Playbook: —</p>
+    <div class="field">
+      <label for="design-learning-playbook">Playbook</label>
+      <textarea id="design-learning-playbook" rows="10" readonly placeholder="No lessons yet — run a review or redesign to start learning."></textarea>
+    </div>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <button class="btn primary" id="design-learning-save">Save learning settings</button>
+      <button class="btn" type="button" id="design-learning-refresh">Refresh playbook</button>
+      <button class="btn" type="button" id="design-learning-distill">Distill now</button>
+      <button class="btn" type="button" id="design-learning-clear-playbook">Clear playbook</button>
+      <button class="btn" type="button" id="design-learning-clear-all">Clear all learning</button>
+    </div>
+    <span class="msg" id="design-learning-msg"></span>
+  </section>
+
+  <section id="sec-discovery-schedule">
+    <h2>Discovery schedule</h2>
+    <div class="sub">Automatically run lead discovery while Website Scout is open. Uses the same path as <strong>Leads → Discover</strong>. Does not run in the background when the app is closed. Honors the automation pause switch above.</div>
+    <div class="field">
+      <label for="disc-enabled">Schedule</label>
+      <select id="disc-enabled">
+        <option value="0">Off</option>
+        <option value="1">On</option>
+      </select>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="disc-mode">Frequency</label>
+        <select id="disc-mode">
+          <option value="interval">Every N hours</option>
+          <option value="daily">Daily at a time</option>
+        </select>
+      </div>
+      <div class="field" id="disc-interval-wrap">
+        <label for="disc-interval">Interval (hours)</label>
+        <input type="number" id="disc-interval" min="1" max="168" step="1" value="6">
+      </div>
+      <div class="field" id="disc-daily-wrap" hidden>
+        <label for="disc-daily">Daily time (local)</label>
+        <input type="time" id="disc-daily" value="09:00">
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="disc-provider">Provider</label>
+        <select id="disc-provider">
+          <option value="tavily">tavily</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="disc-category">Category / niche</label>
+        <input type="text" id="disc-category" placeholder="Plumber" maxlength="200">
+      </div>
+      <div class="field">
+        <label for="disc-location">Location</label>
+        <input type="text" id="disc-location" placeholder="Springfield" maxlength="200">
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="disc-limit">Limit per run</label>
+        <input type="number" id="disc-limit" min="1" max="50" step="1" value="8">
+      </div>
+      <div class="field">
+        <label for="disc-group">Lead group (optional)</label>
+        <input type="text" id="disc-group" placeholder="auto from category · location" maxlength="200">
+      </div>
+      <div class="field">
+        <label for="disc-score">Score new leads</label>
+        <select id="disc-score">
+          <option value="1">Yes</option>
+          <option value="0">No</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="disc-website">Website</label>
+        <select id="disc-website">
+          <option value="">Any</option>
+          <option value="has">Has website</option>
+          <option value="no">No website</option>
+        </select>
+      </div>
+    </div>
+    <div class="row" style="align-items:flex-end">
+      <button class="btn primary" id="disc-save">Save schedule</button>
+      <button class="btn" id="disc-run-now">Run now</button>
+      <span class="msg" id="disc-msg"></span>
+    </div>
+    <div class="hint" id="disc-status" style="margin-top:12px">Loading schedule…</div>
+  </section>
+
+  <section id="sec-smtp">
+    <h2>SMTP / outreach email</h2>
+    <div class="sub">The built-in client is minimal. Use a real provider for deliverability. The password is stored locally and never displayed. Outbound only — there is no IMAP inbox. Client redesign / improvements replies: paste them on the Design job, or drop <code>.eml</code>/<code>.txt</code> into the app <code>inbound-email</code> folder (optional path below), then Submit on that job (kind routes to redesign vs improvements).</div>
+    <div class="field" style="margin-top:10px">
+      <label for="mail-inbound-drop">Inbound email drop folder (optional)</label>
+      <input type="text" id="mail-inbound-drop" data-setting="mail.inbound_drop_dir" placeholder="(default: app data / inbound-email)">
+    </div>
+    <div class="row">
+      <div class="field"><label for="smtp-host">Host</label><input type="text" id="smtp-host" data-setting="smtp.host" placeholder="mail.example.com"></div>
+      <div class="field"><label for="smtp-port">Port</label><input type="number" id="smtp-port" data-setting="smtp.port" min="1" max="65535"></div>
+      <div class="field"><label for="smtp-secure">Use TLS (port 465)</label><select id="smtp-secure" data-setting="smtp.secure"><option value="0">No (STARTTLS / plain)</option><option value="1">Yes</option></select></div>
+    </div>
+    <div class="row">
+      <div class="field"><label for="smtp-user">Username</label><input type="text" id="smtp-user" data-setting="smtp.user" autocomplete="username"></div>
+      <div class="field"><label for="smtp-pass">Password</label><input type="password" id="smtp-pass" autocomplete="new-password" placeholder="(never shown)"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label for="smtp-from-name">From name</label><input type="text" id="smtp-from-name" data-setting="smtp.from_name"></div>
+      <div class="field"><label for="smtp-from-email">From email</label><input type="text" id="smtp-from-email" data-setting="smtp.from_email"></div>
+    </div>
+    <div class="row" style="align-items:flex-end">
+      <button class="btn primary" id="smtp-save">Save SMTP settings</button>
+      <button class="btn" id="smtp-pass-save">Save password</button>
+      <span class="msg" id="smtp-msg"></span>
+    </div>
+  </section>
+
+  <section id="sec-cloudflare">
+    <h2>Cloudflare Pages</h2>
+    <div class="sub">Optional. Publish a generated site for a public preview URL. The token needs Account → Cloudflare Pages → Edit. It is stored locally and never displayed.</div>
+    <div class="row">
+      <div class="field"><label for="cf-account-id">Account ID</label><input type="text" id="cf-account-id" data-setting="cf.account_id" placeholder="32-character hex ID"></div>
+      <div class="field"><label for="cf-project">Pages project</label><input type="text" id="cf-project" data-setting="cf.project" placeholder="my-preview-sites"></div>
+    </div>
+    <div class="field"><label for="cf-preview-domain">Custom preview domain (optional)</label><input type="text" id="cf-preview-domain" data-setting="cf.preview_domain" placeholder="previews.example.com"></div>
+    <div class="field">
+      <label for="cf-token">API token</label>
+      <input type="password" id="cf-token" autocomplete="new-password" placeholder="(never shown after saving)">
+      <div class="row" style="margin-top:8px">
+        <button class="btn primary" id="cf-token-save">Save token</button>
+        <button class="btn" id="cf-test">Test connection</button>
+        <span class="msg" id="cf-msg"></span>
+      </div>
+      <div class="hint" id="cf-token-status"></div>
+    </div>
+    <button class="btn primary" id="cf-save">Save Cloudflare settings</button>
+    <span class="msg" id="cf-save-msg"></span>
+  </section>
+
+  <section id="sec-tavily">
+    <h2>Lead discovery (Tavily)</h2>
+    <div class="sub">Required for <strong>Leads → Discover</strong> with the <code>tavily</code> provider. Get a key at <a href="https://tavily.com" target="_blank" rel="noopener">tavily.com</a>. Stored locally and never shown again. Without a key, discovery returns <code>PROVIDER_NOT_CONFIGURED</code>. Discovery runs a few local-business query variants and prefers <code>advanced</code> depth for richer snippets.</div>
+    <div class="field">
+      <label for="tavily-key">API key</label>
+      <input type="password" id="tavily-key" autocomplete="new-password" placeholder="(never shown after saving)">
+      <div class="row" style="margin-top:8px">
+        <button class="btn primary" id="tavily-key-save">Save key</button>
+        <span class="msg" id="tavily-key-msg"></span>
+      </div>
+      <div class="hint" id="tavily-key-status"></div>
+    </div>
+    <div class="field" style="margin-top:12px">
+      <label for="tavily-search-depth">Search depth</label>
+      <select id="tavily-search-depth" data-setting="providers.tavily.search_depth">
+        <option value="advanced">advanced (better relevance, ~2 credits/query)</option>
+        <option value="basic">basic (faster / cheaper)</option>
+      </select>
+      <div class="hint">Advanced is recommended for local lead discovery. Change applies on the next Discover run.</div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn" id="tavily-depth-save" type="button">Save search depth</button>
+      <span class="msg" id="tavily-depth-msg"></span>
+    </div>
+  </section>
+
+  <section id="sec-photos">
+    <h2>Pexels photos</h2>
+    <div class="sub">Optional. When a key is saved, a website delivery can pull a few stock photos. The key is stored locally and never shown again. Builds succeed without it.</div>
+    <div class="field">
+      <label for="pexels-key">API key</label>
+      <input type="password" id="pexels-key" autocomplete="new-password" placeholder="(never shown after saving)">
+      <div class="row" style="margin-top:8px">
+        <button class="btn primary" id="pexels-key-save">Save key</button>
+        <span class="msg" id="pexels-key-msg"></span>
+      </div>
+      <div class="hint" id="pexels-key-status"></div>
+    </div>
+    <p class="hint">Industry templates and other design jobs are edited on the <a href="#/design">Design</a> page. The agent builds from your instructions.</p>
+  </section>
+
+  <section id="sec-fal">
+    <h2>fal.ai (image enhance)</h2>
+    <div class="sub">Optional. During <strong>Research</strong>, photos from the business site can be AI-enhanced (fal <code>nano-banana-pro/edit</code>). Also uses <code>FAL_KEY</code> from the environment if set.</div>
+    <div class="field">
+      <label for="fal-key">API key</label>
+      <input type="password" id="fal-key" autocomplete="new-password" placeholder="(never shown after saving)">
+      <div class="row" style="margin-top:8px">
+        <button class="btn primary" id="fal-key-save">Save key</button>
+        <span class="msg" id="fal-key-msg"></span>
+      </div>
+      <div class="hint" id="fal-key-status"></div>
+    </div>
+  </section>
+
+  <section id="sec-mail">
+    <h2>Legal footer</h2>
+    <div class="sub">Appended to every outreach email.</div>
+    <div class="field">
+      <textarea id="mail-footer" data-setting="mail.footer" rows="3" style="max-width:100%"></textarea>
+    </div>
+    <div class="row">
+      <div class="field"><label for="score-q">Qualified threshold (0–100)</label><input type="number" id="score-q" data-setting="score.threshold_qualified" min="0" max="100"></div>
+      <div class="field"><label for="score-h">Hot threshold (0–100)</label><input type="number" id="score-h" data-setting="score.threshold_hot" min="0" max="100"></div>
+      <div class="field"><label for="app-name">App name</label><input type="text" id="app-name" data-setting="app.name"></div>
+    </div>
+    <button class="btn primary" id="mail-save">Save</button>
+    <span class="msg" id="mail-msg"></span>
+  </section>
+    </div>
+  </div>
+</div>

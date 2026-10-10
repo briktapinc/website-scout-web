@@ -1,0 +1,309 @@
+-- Website Scout Web — multi-tenant MySQL schema (Hostinger)
+
+SET NAMES utf8mb4;
+SET FOREIGN_KEY_CHECKS = 0;
+
+CREATE TABLE IF NOT EXISTS users (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  email VARCHAR(254) NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  name VARCHAR(120) NOT NULL DEFAULT '',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_users_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS workspaces (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(160) NOT NULL,
+  slug VARCHAR(80) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_workspaces_slug (slug)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS workspace_members (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  role ENUM('owner','admin','member') NOT NULL DEFAULT 'member',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_member (workspace_id, user_id),
+  KEY idx_member_user (user_id),
+  CONSTRAINT fk_member_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+  CONSTRAINT fk_member_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS workspace_tokens (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  name VARCHAR(120) NOT NULL DEFAULT 'MCP',
+  token_hash CHAR(64) NOT NULL,
+  token_prefix VARCHAR(12) NOT NULL,
+  last_used_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_token_hash (token_hash),
+  KEY idx_token_ws (workspace_id),
+  CONSTRAINT fk_token_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS workspace_settings (
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  `key` VARCHAR(120) NOT NULL,
+  value MEDIUMTEXT NOT NULL,
+  PRIMARY KEY (workspace_id, `key`),
+  CONSTRAINT fk_settings_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS sessions (
+  session_id VARCHAR(128) NOT NULL PRIMARY KEY,
+  expires BIGINT UNSIGNED NOT NULL,
+  data MEDIUMTEXT,
+  KEY idx_sessions_expires (expires)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS leads (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  business_name VARCHAR(200) NOT NULL,
+  category VARCHAR(120) NULL,
+  phone VARCHAR(40) NULL,
+  email VARCHAR(200) NULL,
+  website VARCHAR(500) NULL,
+  address VARCHAR(300) NULL,
+  city VARCHAR(120) NULL,
+  state VARCHAR(80) NULL,
+  postal_code VARCHAR(30) NULL,
+  country VARCHAR(80) DEFAULT 'US',
+  latitude DOUBLE NULL,
+  longitude DOUBLE NULL,
+  rating DOUBLE NULL,
+  review_count INT NULL,
+  description TEXT NULL,
+  hours JSON NULL,
+  services JSON NULL,
+  social_links JSON NULL,
+  source VARCHAR(80) NULL,
+  source_ref VARCHAR(200) NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'new',
+  score INT NOT NULL DEFAULT 0,
+  qualified TINYINT(1) NOT NULL DEFAULT 0,
+  qualification_note TEXT NULL,
+  tags JSON NULL,
+  lead_group VARCHAR(120) NULL,
+  notes TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_leads_ws_status (workspace_id, status),
+  KEY idx_leads_ws_score (workspace_id, score),
+  KEY idx_leads_ws_group (workspace_id, lead_group),
+  CONSTRAINT fk_leads_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS lead_events (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  lead_id BIGINT UNSIGNED NOT NULL,
+  type VARCHAR(80) NOT NULL,
+  detail TEXT NULL,
+  at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_lead_events (workspace_id, lead_id),
+  CONSTRAINT fk_lead_events_lead FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS lead_scores (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  lead_id BIGINT UNSIGNED NOT NULL,
+  score INT NOT NULL,
+  breakdown JSON NOT NULL,
+  at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_lead_scores (workspace_id, lead_id),
+  CONSTRAINT fk_lead_scores_lead FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS business_facts (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  lead_id BIGINT UNSIGNED NOT NULL,
+  fact_key VARCHAR(200) NOT NULL,
+  value MEDIUMTEXT NOT NULL,
+  source VARCHAR(200) NOT NULL,
+  source_url VARCHAR(1000) NULL,
+  confidence VARCHAR(20) DEFAULT 'medium',
+  claim_class ENUM('VERIFIED','AI_COPY','OWNER_PROVIDED','UNKNOWN') NOT NULL DEFAULT 'UNKNOWN',
+  fetched_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_facts_lead (workspace_id, lead_id),
+  CONSTRAINT fk_facts_lead FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS design_jobs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  lead_id BIGINT UNSIGNED NULL,
+  type VARCHAR(40) NOT NULL DEFAULT 'website',
+  title VARCHAR(200) NOT NULL,
+  instructions MEDIUMTEXT NOT NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'draft',
+  site_shape VARCHAR(20) NULL,
+  contact_email VARCHAR(254) NULL,
+  brief JSON NULL,
+  delivery JSON NULL,
+  review JSON NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_design_ws_status (workspace_id, status),
+  CONSTRAINT fk_design_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS design_questions (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  job_id BIGINT UNSIGNED NOT NULL,
+  question TEXT NOT NULL,
+  answer TEXT NULL,
+  from_email VARCHAR(254) NULL,
+  asked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  answered_at DATETIME NULL,
+  KEY idx_dq_job (workspace_id, job_id),
+  CONSTRAINT fk_dq_job FOREIGN KEY (job_id) REFERENCES design_jobs(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS websites (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  lead_id BIGINT UNSIGNED NULL,
+  name VARCHAR(200) NOT NULL,
+  industry VARCHAR(120) NULL,
+  theme JSON NOT NULL,
+  pages JSON NOT NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'draft',
+  origin VARCHAR(40) NULL DEFAULT 'template',
+  preview_path VARCHAR(500) NULL,
+  preview_url VARCHAR(500) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_websites_ws (workspace_id),
+  KEY idx_websites_lead (workspace_id, lead_id),
+  CONSTRAINT fk_websites_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS email_templates (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  name VARCHAR(200) NOT NULL,
+  subject VARCHAR(500) NOT NULL,
+  body MEDIUMTEXT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_templates_ws (workspace_id),
+  CONSTRAINT fk_templates_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS campaigns (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  name VARCHAR(200) NOT NULL,
+  template_id BIGINT UNSIGNED NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'draft',
+  rate_per_hour INT NOT NULL DEFAULT 30,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_campaigns_ws (workspace_id),
+  CONSTRAINT fk_campaigns_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS campaign_messages (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  campaign_id BIGINT UNSIGNED NOT NULL,
+  lead_id BIGINT UNSIGNED NOT NULL,
+  to_email VARCHAR(254) NOT NULL,
+  subject VARCHAR(500) NOT NULL,
+  body MEDIUMTEXT NOT NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'queued',
+  scheduled_at DATETIME NULL,
+  sent_at DATETIME NULL,
+  error TEXT NULL,
+  KEY idx_msg_ws_status (workspace_id, status, scheduled_at),
+  CONSTRAINT fk_msg_campaign FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS suppression_list (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  email VARCHAR(254) NOT NULL,
+  reason VARCHAR(80) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_supp (workspace_id, email),
+  CONSTRAINT fk_supp_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS prompts (
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  `key` VARCHAR(80) NOT NULL,
+  name VARCHAR(160) NOT NULL,
+  body MEDIUMTEXT NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (workspace_id, `key`),
+  CONSTRAINT fk_prompts_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS ai_usage (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  task VARCHAR(80) NOT NULL,
+  model VARCHAR(120) NOT NULL,
+  prompt_tokens INT NOT NULL DEFAULT 0,
+  completion_tokens INT NOT NULL DEFAULT 0,
+  cost_usd DECIMAL(12,6) NOT NULL DEFAULT 0,
+  lead_id BIGINT UNSIGNED NULL,
+  note TEXT NULL,
+  at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_ai_ws_at (workspace_id, at),
+  CONSTRAINT fk_ai_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS activity_log (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  area VARCHAR(40) NOT NULL,
+  message TEXT NOT NULL,
+  at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_activity_ws (workspace_id, id),
+  CONSTRAINT fk_activity_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS scheduled_jobs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  name VARCHAR(160) NOT NULL,
+  type VARCHAR(40) NOT NULL,
+  cron_expr VARCHAR(80) NULL,
+  interval_minutes INT NULL,
+  payload JSON NULL,
+  enabled TINYINT(1) NOT NULL DEFAULT 1,
+  next_run_at DATETIME NULL,
+  last_run_at DATETIME NULL,
+  last_status VARCHAR(40) NULL,
+  last_error TEXT NULL,
+  last_result JSON NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_jobs_due (enabled, next_run_at),
+  KEY idx_jobs_ws (workspace_id),
+  CONSTRAINT fk_jobs_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS job_runs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  job_id BIGINT UNSIGNED NOT NULL,
+  status VARCHAR(40) NOT NULL,
+  result JSON NULL,
+  error TEXT NULL,
+  started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  finished_at DATETIME NULL,
+  KEY idx_runs_job (workspace_id, job_id, id),
+  CONSTRAINT fk_runs_job FOREIGN KEY (job_id) REFERENCES scheduled_jobs(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+SET FOREIGN_KEY_CHECKS = 1;

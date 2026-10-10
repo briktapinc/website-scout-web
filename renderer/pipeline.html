@@ -1,0 +1,14 @@
+<!-- pipeline.html — Pipeline kanban fragment. Loaded into #view by the shell router; companion pipeline.js wires it up. -->
+<div id="pipeline-root" class="page">
+  <div class="page-head">
+    <div>
+      <h1>Pipeline</h1>
+      <p class="lede">Move a business from first find through a live customer. Open a card for the lead, or record intent from the card.</p>
+    </div>
+    <span id="pipeline-summary" class="muted"></span>
+  </div>
+  <div id="pipeline-board" class="kanban"></div>
+
+  <!-- Intent record modal -->
+  <div id="pipeline-modal" class="modal hidden"><div class="modal-box" id="pipeline-modal-box"></div></div>
+</div>

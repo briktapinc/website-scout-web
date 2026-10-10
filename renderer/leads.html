@@ -1,0 +1,212 @@
+<!-- Leads page fragment — loaded into #view by the app router. -->
+<div id="page-leads" class="page">
+  <div class="page-header">
+    <div>
+      <h1>Lead inbox</h1>
+      <p class="lede">Find local businesses, score them, and organize hunts into groups so batches stay separate.</p>
+    </div>
+    <div class="page-actions">
+      <button id="leads-discover-btn" class="btn primary" type="button">Discover</button>
+      <button id="leads-add-btn" class="btn" type="button">Add lead</button>
+      <button id="leads-import-btn" class="btn" type="button">Import CSV</button>
+    </div>
+  </div>
+
+  <div class="leads-toolbar">
+    <input id="leads-search" type="search" placeholder="Search name, city, category, group…" autocomplete="off" />
+    <select id="leads-group-filter" aria-label="Group filter">
+      <option value="">All groups</option>
+    </select>
+    <select id="leads-category-filter" aria-label="Category filter">
+      <option value="">All categories</option>
+    </select>
+    <select id="leads-status-filter" aria-label="Status filter">
+      <option value="">All statuses</option>
+    </select>
+    <select id="leads-tag-filter" aria-label="Tag filter">
+      <option value="">All tags</option>
+    </select>
+    <select id="leads-website-filter" aria-label="Website presence filter">
+      <option value="">Any website</option>
+      <option value="has">Has website</option>
+      <option value="no">No website</option>
+    </select>
+    <input id="leads-minscore" type="number" min="0" max="100" placeholder="Min score" aria-label="Minimum score" />
+    <select id="leads-view-mode" aria-label="List view">
+      <option value="flat">Flat list</option>
+      <option value="group" selected>Group by hunt</option>
+      <option value="category">Group by category</option>
+    </select>
+    <button id="leads-filter-btn" class="btn" type="button">Apply</button>
+    <button id="leads-clear-btn" class="btn" type="button">Clear</button>
+  </div>
+
+  <div id="leads-facet-chips" class="leads-facet-chips" aria-label="Quick filters"></div>
+
+  <div id="leads-bulk-bar" class="bulk-bar" hidden>
+    <span id="leads-selected-count">0 selected</span>
+    <select id="leads-bulk-status" aria-label="Set status">
+      <option value="">Set status…</option>
+    </select>
+    <input id="leads-bulk-group" type="text" list="leads-group-suggestions" placeholder="hunt group" aria-label="Group name" maxlength="200" />
+    <button id="leads-bulk-setgroup" class="btn" type="button">Set group</button>
+    <input id="leads-bulk-category" type="text" list="leads-category-suggestions" placeholder="category" aria-label="Category" maxlength="200" />
+    <button id="leads-bulk-setcategory" class="btn" type="button">Set category</button>
+    <input id="leads-bulk-tag" type="text" list="leads-tag-suggestions" placeholder="tag name" aria-label="Tag name" />
+    <button id="leads-bulk-addtag" class="btn" type="button">Add tag</button>
+    <button id="leads-bulk-untag" class="btn" type="button">Remove tag</button>
+    <button id="leads-bulk-research" class="btn" type="button">Research</button>
+    <button id="leads-bulk-delete" type="button" class="btn danger">Delete</button>
+    <button id="leads-bulk-clear" class="btn" type="button">Clear selection</button>
+  </div>
+  <datalist id="leads-group-suggestions"></datalist>
+  <datalist id="leads-category-suggestions"></datalist>
+  <datalist id="leads-tag-suggestions"></datalist>
+
+  <div class="table-wrap" id="leads-table-wrap">
+    <table id="leads-table" class="data-table">
+      <thead>
+        <tr>
+          <th><input id="leads-select-all" type="checkbox" aria-label="Select all" /></th>
+          <th><button class="sort-btn" data-sort="name" type="button">Name</button></th>
+          <th><button class="sort-btn" data-sort="group" type="button">Group</button></th>
+          <th><button class="sort-btn" data-sort="category" type="button">Category</button></th>
+          <th>Tags</th>
+          <th><button class="sort-btn" data-sort="score" type="button">Score</button></th>
+          <th><button class="sort-btn" data-sort="status" type="button">Status</button></th>
+          <th><button class="sort-btn" data-sort="source" type="button">Source</button></th>
+          <th><button class="sort-btn" data-sort="updated" type="button">Updated</button></th>
+        </tr>
+      </thead>
+      <tbody id="leads-tbody">
+        <tr><td colspan="9" class="empty">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pagination">
+    <button id="leads-prev" class="btn" type="button">Previous</button>
+    <span id="leads-page-info"></span>
+    <button id="leads-next" class="btn" type="button">Next</button>
+    <select id="leads-pagesize" aria-label="Page size">
+      <option value="10">10</option>
+      <option value="25" selected>25</option>
+      <option value="50">50</option>
+      <option value="100">100</option>
+    </select>
+  </div>
+
+  <!-- Add lead modal -->
+  <div id="leads-add-modal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Add lead</h2>
+      <form id="leads-add-form">
+        <label>Business name * <input name="business_name" required maxlength="200" /></label>
+        <label>Category <input name="category" maxlength="200" list="leads-category-suggestions" /></label>
+        <label>Hunt group <input name="lead_group" maxlength="200" list="leads-group-suggestions" placeholder="e.g. plumber · 19510" /></label>
+        <label>Phone <input name="phone" maxlength="60" /></label>
+        <label>Email <input name="email" type="email" maxlength="320" /></label>
+        <label>Website <input name="website" maxlength="500" placeholder="https://…" /></label>
+        <label>Address <input name="address" maxlength="500" /></label>
+        <div class="form-row">
+          <label>City <input name="city" maxlength="200" /></label>
+          <label>State <input name="state" maxlength="100" /></label>
+          <label>Postal code <input name="postal_code" maxlength="40" /></label>
+        </div>
+        <div class="form-row">
+          <label>Rating (0–5) <input name="rating" type="number" min="0" max="5" step="0.1" /></label>
+          <label>Review count <input name="review_count" type="number" min="0" step="1" /></label>
+        </div>
+        <label>Description <textarea name="description" rows="3" maxlength="5000"></textarea></label>
+        <label>Tags (comma separated) <input name="tags" maxlength="500" /></label>
+        <div id="leads-add-error" class="form-error" hidden></div>
+        <div class="modal-actions">
+          <button type="button" class="btn modal-close">Cancel</button>
+          <button type="submit" class="btn primary">Save lead</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Discover leads modal -->
+  <div id="leads-discover-modal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Discover leads</h2>
+      <p class="note">Searches the web for local businesses (category + location), creates leads into a hunt group, and extracts phone/address/website from results when present. Leave group blank to auto-name as <code>category · location</code>. Directory listings are not counted as the business website.</p>
+      <form id="leads-discover-form" class="form-stack">
+        <label>Provider
+          <select id="leads-discover-provider"></select>
+        </label>
+        <label>Category / query
+          <input id="leads-discover-category" type="text" maxlength="200" placeholder="Plumber" required list="leads-category-suggestions" />
+        </label>
+        <label>Location
+          <input id="leads-discover-location" type="text" maxlength="200" placeholder="19510" required />
+        </label>
+        <label>Hunt group
+          <input id="leads-discover-group" type="text" maxlength="200" list="leads-group-suggestions" placeholder="Auto: category · location" />
+        </label>
+        <label>How many
+          <input id="leads-discover-limit" type="number" min="1" max="50" value="8" />
+        </label>
+        <label>Website
+          <select id="leads-discover-website">
+            <option value="">Any</option>
+            <option value="has">Has website</option>
+            <option value="no">No website</option>
+          </select>
+        </label>
+        <label class="check"><input id="leads-discover-score" type="checkbox" checked /> Score each new lead</label>
+      </form>
+      <div id="leads-discover-error" class="form-error" hidden></div>
+      <div id="leads-discover-result" class="form-result" hidden></div>
+      <div class="modal-actions">
+        <button type="button" class="btn modal-close">Close</button>
+        <button id="leads-discover-submit" class="btn primary" type="button">Run discovery</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import CSV modal -->
+  <div id="leads-import-modal" class="modal" hidden>
+    <div class="modal-card modal-wide">
+      <h2>Import CSV</h2>
+      <p class="note">
+        Accepted headers: business_name, category, phone, email, website, address,
+        city, state, postal_code, rating, review_count, description.
+        Aliases: name→business_name, zip→postal_code, url→website.
+      </p>
+      <label>Put imported rows in hunt group
+        <input id="leads-import-group" type="text" maxlength="200" list="leads-group-suggestions" placeholder="optional" />
+      </label>
+      <label class="file-label">Choose a .csv file
+        <input id="leads-csv-file" type="file" accept=".csv,text/csv" />
+      </label>
+      <textarea id="leads-csv-text" rows="10" placeholder="…or paste CSV text here (first row = headers)"></textarea>
+      <div id="leads-import-error" class="form-error" hidden></div>
+      <div id="leads-import-result" class="form-result" hidden></div>
+      <div class="modal-actions">
+        <button type="button" class="btn modal-close">Close</button>
+        <button id="leads-import-submit" class="btn primary" type="button">Import</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lead detail drawer -->
+  <div id="leads-drawer" class="drawer" hidden>
+    <div class="drawer-card">
+      <div class="drawer-header">
+        <h2 id="leads-drawer-title">Lead</h2>
+        <button id="leads-drawer-close" type="button" aria-label="Close">✕</button>
+      </div>
+      <div id="leads-drawer-body" class="drawer-body"></div>
+      <div class="drawer-actions">
+        <button id="leads-drawer-score" class="btn" type="button">Score</button>
+        <button id="leads-drawer-qualify" class="btn" type="button">Qualify</button>
+        <button id="leads-drawer-research" class="btn" type="button">Research</button>
+        <button id="leads-drawer-merge" class="btn" type="button">Merge duplicates</button>
+      </div>
+      <div id="leads-drawer-merge-list" class="merge-list" hidden></div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,77 @@
+<div class="page" id="mcp-root">
+  <div class="page-head">
+    <div>
+      <h1>MCP</h1>
+      <p class="lede">One Streamable HTTP server for Cursor, Muse, Claude, and VS Code (URL + Bearer). ChatGPT reaches the same server through OpenAI’s Secure MCP Tunnel (tunnel-client → localhost), or via a public HTTPS <code>/mcp</code> URL.</p>
+    </div>
+    <button id="mcp-copy" class="btn primary" type="button">Copy local connection</button>
+  </div>
+  <p id="mcp-copy-status" class="muted" hidden></p>
+
+  <section class="card" style="margin-top:4px">
+    <h2>HTTP MCP (Cursor · Muse · ChatGPT tunnel target)</h2>
+    <p class="muted">Starts the Streamable HTTP listener. Cursor and Muse connect with the JSON below (url + Bearer). For ChatGPT, keep this running and point OpenAI <code>tunnel-client</code> at <code>http://127.0.0.1:&lt;port&gt;/mcp</code> — see the ChatGPT tunnel example under the config block. Set a custom public URL for MagicDNS / Tailscale Serve if you want remote URL clients.</p>
+    <div class="form-grid" style="margin:12px 0;gap:10px">
+      <label for="mcp-public-url">Tailscale HTTP MCP URL
+        <input id="mcp-public-url" type="text" maxlength="500" placeholder="http://your-machine.ts.net:8742/ws">
+      </label>
+      <label for="mcp-listen-port">Listen port
+        <input id="mcp-listen-port" type="number" min="1" max="65535" step="1" value="8742">
+      </label>
+      <div class="row gap" style="flex-wrap:wrap;align-items:center">
+        <button id="mcp-url-save" class="btn primary" type="button">Save URL</button>
+        <button id="mcp-url-detect" class="btn" type="button">Use detected Tailscale</button>
+        <button id="mcp-url-clear" class="btn" type="button">Clear (auto)</button>
+      </div>
+      <p class="hint">Use the full <code>/ws</code> endpoint (same as in Copy Tailscale config). A base URL without a path is OK — <code>/ws</code> is added automatically. Changing the listen port restarts HTTP MCP when this app started the listener.</p>
+    </div>
+    <ul class="fact-list" id="mcp-ts-facts"><li class="muted">Loading…</li></ul>
+    <div class="row gap" style="margin-top:10px;flex-wrap:wrap">
+      <button id="mcp-http-start" class="btn primary" type="button">Start HTTP MCP</button>
+      <button id="mcp-http-stop" class="btn" type="button">Stop</button>
+      <button id="mcp-http-rotate" class="btn" type="button">Rotate token</button>
+      <button id="mcp-ts-copy" class="btn" type="button">Copy Tailscale config</button>
+    </div>
+    <p id="mcp-ts-status" class="muted" style="margin-top:8px"></p>
+    <pre id="mcp-ts-config" class="mcp-config" style="margin-top:10px">Loading…</pre>
+    <div id="mcp-ts-examples" class="mcp-examples" style="margin-top:12px"></div>
+  </section>
+
+  <div class="mcp-grid" style="margin-top:14px">
+    <section class="card">
+      <h2>Local stdio</h2>
+      <p class="muted">Command, arguments, and <code>WS_DB_PATH</code> for any stdio MCP client. The path is this app’s live database.</p>
+      <pre id="mcp-config" class="mcp-config">Loading…</pre>
+    </section>
+    <section class="card">
+      <h2>This server</h2>
+      <ul class="fact-list" id="mcp-facts"><li class="muted">Loading…</li></ul>
+    </section>
+  </div>
+
+  <section class="card" style="margin-top:14px">
+    <h2>Host examples (stdio)</h2>
+    <p class="muted">The same local server, wrapped the way a few clients expect.</p>
+    <div id="mcp-examples" class="mcp-examples"></div>
+  </section>
+
+  <section class="card" style="margin-top:14px">
+    <h2>How a call is handled</h2>
+    <ul class="fact-list" id="mcp-notes"></ul>
+  </section>
+
+  <section style="margin-top:18px">
+    <div class="page-head">
+      <div>
+        <h2>Tools</h2>
+        <p class="lede" id="mcp-tool-count">The same list <code>tools/list</code> returns.</p>
+      </div>
+    </div>
+    <div class="mcp-tools" id="mcp-tools"></div>
+  </section>
+
+  <section class="card" style="margin-top:18px">
+    <h2>Recent MCP activity</h2>
+    <ul class="list" id="mcp-activity"><li class="muted">Loading…</li></ul>
+  </section>
+</div>

@@ -1,0 +1,152 @@
+<!-- Websites page (Workstream 3). Loaded into #view by the shell router. -->
+<div class="ws" id="ws-root">
+  <!-- LIST VIEW -->
+  <div id="ws-list">
+    <div class="page-head">
+      <div>
+        <h1>Websites</h1>
+        <p class="lede">Generate a site from a lead, then edit sections, theme, and the public preview.</p>
+      </div>
+    </div>
+    <div class="toolbar">
+      <div class="lead-picker toolbar-lead-picker" id="ws-lead-picker">
+        <label class="small" for="ws-lead-search">Lead search</label>
+        <input id="ws-lead-search" type="search" autocomplete="off" placeholder="Search by name, city…" />
+        <input id="ws-gen-lead" type="hidden" value="" />
+        <div id="ws-lead-selected" class="lead-picker-selected" hidden></div>
+        <ul id="ws-lead-results" class="lead-picker-results" hidden></ul>
+      </div>
+      <label class="small" for="ws-site-shape">Site shape</label>
+      <select id="ws-site-shape" style="width:auto">
+        <option value="landing">Landing page</option>
+        <option value="multipage" selected>Multi-page site</option>
+      </select>
+      <button class="btn primary" id="ws-gen-btn">Assign to agent</button>
+      <button class="btn" id="ws-fallback-btn" title="Build a local template site. Replaces an agent delivery only after you confirm.">Template fallback</button>
+      <span class="hint" id="ws-list-msg"></span>
+    </div>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Business</th><th>Industry</th><th>Status</th><th>Versions</th><th>Updated</th></tr></thead>
+      <tbody id="ws-sites-body"><tr><td colspan="5" class="hint">Loading…</td></tr></tbody>
+    </table>
+    </div>
+    <div class="pagination">
+      <button id="ws-prev" class="btn" type="button">Previous</button>
+      <span id="ws-page-info"></span>
+      <button id="ws-next" class="btn" type="button">Next</button>
+      <select id="ws-pagesize" aria-label="Page size">
+        <option value="10">10</option>
+        <option value="25" selected>25</option>
+        <option value="50">50</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- DETAIL VIEW -->
+  <div id="ws-detail" hidden>
+    <div class="toolbar">
+      <button class="btn" id="ws-back">All sites</button>
+      <h2 id="ws-detail-title" style="margin:0"></h2>
+      <span id="ws-detail-status"></span>
+      <span style="flex:1"></span>
+      <button class="btn primary" id="ws-save">Save changes</button>
+      <button class="btn" id="ws-recopy" title="Rebuild the site with fresh AI marketing copy">Regenerate copy</button>
+      <button class="btn" id="ws-photos">Add photos</button>
+      <button class="btn" id="ws-browser">Open in browser</button>
+      <button class="btn" id="ws-qa">Run QA</button>
+      <button class="btn" id="ws-export">Export</button>
+    </div>
+    <div class="hint" id="ws-pexels-hint" style="margin-bottom:10px"></div>
+    <div class="hint" id="ws-ai-hint" style="margin-bottom:10px"></div>
+    <div class="hint mono" id="ws-export-path" style="margin-bottom:10px"></div>
+
+    <div class="panel" id="cf-publish-block">
+      <h3>Public preview</h3>
+      <p class="hint">Publish this site to Cloudflare Pages for a real public URL.</p>
+      <div class="row" style="align-items:center">
+        <button class="btn primary" id="btn-cf-publish">Publish preview</button>
+        <span id="cf-publish-status" class="hint"></span>
+      </div>
+      <div id="cf-publish-result" hidden style="margin-top:8px">
+        <input id="cf-public-url" readonly size="48" class="mono" />
+        <button class="btn" id="btn-cf-copy">Copy</button>
+        <a id="cf-public-link" href="#" target="_blank" rel="noopener">Open</a>
+      </div>
+      <div id="cf-not-configured" hidden class="hint" style="margin-top:8px">
+        Cloudflare is not configured.
+        <a href="#/settings">Add your API token in Settings</a>.
+      </div>
+    </div>
+
+    <div class="detail-grid">
+      <div>
+        <div class="panel">
+          <div class="row">
+            <strong>Preview</strong>
+            <div class="tabs" style="margin:0">
+              <button class="btn active" id="ws-prev-desktop">Desktop</button>
+              <button class="btn" id="ws-prev-mobile">Mobile</button>
+            </div>
+            <span class="hint">Rendered from the JSON model (not stored HTML).</span>
+          </div>
+          <div class="preview-frame desktop" id="ws-preview-frame">
+            <iframe id="ws-preview" title="Site preview" sandbox="allow-same-origin allow-scripts"></iframe>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>QA checklist</h3>
+          <div id="ws-qa-results" class="hint">Not run yet.</div>
+        </div>
+
+        <div class="panel">
+          <h3>Claim manifest <span class="hint">— which claims are VERIFIED vs AI_COPY</span></h3>
+          <div id="ws-manifest"><span class="hint">Loading…</span></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="panel">
+          <h3>Pages &amp; sections</h3>
+          <div class="tabs" id="ws-page-tabs"></div>
+          <div id="ws-sections"></div>
+          <div class="row" style="margin-top:10px">
+            <select id="ws-add-type"></select>
+            <button class="btn" id="ws-add-sec">Add section</button>
+          </div>
+          <div class="hint">Select a section to edit its content JSON, or reorder with ↑ ↓.</div>
+          <div id="ws-sec-editor" style="margin-top:10px" hidden>
+            <div class="row"><strong id="ws-sec-editor-title" class="mono"></strong></div>
+            <textarea class="json" id="ws-sec-json"></textarea>
+            <div class="row" style="margin-top:6px">
+              <button class="btn" id="ws-sec-apply">Apply JSON</button>
+              <span class="hint" id="ws-sec-msg"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Theme</h3>
+          <div class="row"><label class="small">Primary</label><input type="color" id="ws-theme-primary"><span class="mono hint" id="ws-theme-primary-v"></span></div>
+          <div class="row"><label class="small">Secondary</label><input type="color" id="ws-theme-secondary"><span class="mono hint" id="ws-theme-secondary-v"></span></div>
+          <div class="row"><label class="small">Background</label><input type="color" id="ws-theme-bg"><span class="mono hint" id="ws-theme-bg-v"></span></div>
+          <div class="row"><label class="small">Text</label><input type="color" id="ws-theme-text"><span class="mono hint" id="ws-theme-text-v"></span></div>
+          <div class="row"><label class="small">Font</label>
+            <select id="ws-theme-font">
+              <option value='system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'>System</option>
+              <option value='Georgia, "Times New Roman", serif'>Serif</option>
+              <option value='"Courier New", monospace'>Monospace</option>
+            </select>
+          </div>
+          <div class="hint">Click “Save changes” to persist theme + sections as a new version.</div>
+        </div>
+
+        <div class="panel">
+          <h3>Version history</h3>
+          <div id="ws-versions"><span class="hint">Loading…</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

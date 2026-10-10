@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Website Scout</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">WS</span>
+        <span class="brand-copy">
+          <span class="brand-name">Website Scout</span>
+          <span class="brand-tag">Local business desk</span>
+        </span>
+      </div>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#/dashboard" data-route="dashboard">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z"/></svg>
+          Dashboard
+        </a>
+        <a href="#/leads" data-route="leads">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8 1a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM3 19c.4-2.6 2.6-4 5-4s4.6 1.4 5 4M14 15c2.1.2 3.8 1.4 4.4 4"/></svg>
+          Leads
+        </a>
+        <a href="#/websites" data-route="websites">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4zM4 10h16M8 6V4m8 2V4"/></svg>
+          Websites
+        </a>
+        <a href="#/design" data-route="design">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16l4-8 4 6 3-4 5 6H4zM8 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>
+          Design
+        </a>
+        <a href="#/outreach" data-route="outreach">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4zM4 7l8 6 8-6"/></svg>
+          Outreach
+        </a>
+        <a href="#/pipeline" data-route="pipeline">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4v16H5zM10 8h4v12h-4zM15 6h4v14h-4z"/></svg>
+          Pipeline
+        </a>
+        <a href="#/mcp" data-route="mcp">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8V5a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v3M8 16v3a2 2 0 0 0 2 2h0a2 2 0 0 0 2-2v-3M4 12h6m4 0h6M9 9h6v6H9z"/></svg>
+          MCP
+        </a>
+        <a href="#/settings" data-route="settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h16M16 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"/></svg>
+          Settings
+        </a>
+      </nav>
+      <a href="#/settings" id="shell-automation" class="shell-status">Checking automation…</a>
+    </aside>
+    <div class="app-main">
+      <main id="view"></main>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
