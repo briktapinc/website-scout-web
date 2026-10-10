@@ -31,6 +31,37 @@ CREATE TABLE IF NOT EXISTS platform_audit (
   KEY idx_platform_audit_at (at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS payments (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NULL,
+  stripe_invoice_id VARCHAR(120) NULL,
+  stripe_payment_intent_id VARCHAR(120) NULL,
+  stripe_charge_id VARCHAR(120) NULL,
+  amount_cents INT NOT NULL DEFAULT 0,
+  currency VARCHAR(12) NOT NULL DEFAULT 'usd',
+  status VARCHAR(40) NOT NULL DEFAULT 'open',
+  description TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_payments_invoice (stripe_invoice_id),
+  KEY idx_payments_user (user_id),
+  KEY idx_payments_charge (stripe_charge_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS refunds (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  payment_id BIGINT UNSIGNED NULL,
+  user_id BIGINT UNSIGNED NULL,
+  stripe_refund_id VARCHAR(120) NULL,
+  amount_cents INT NOT NULL DEFAULT 0,
+  currency VARCHAR(12) NOT NULL DEFAULT 'usd',
+  status VARCHAR(40) NOT NULL DEFAULT 'succeeded',
+  reason VARCHAR(80) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_refunds_stripe (stripe_refund_id),
+  KEY idx_refunds_user (user_id),
+  KEY idx_refunds_payment (payment_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS workspaces (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(160) NOT NULL,

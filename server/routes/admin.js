@@ -143,4 +143,26 @@ router.post('/settings/push', async (req, res) => {
   } catch (e) { fail(res, e, 500); }
 });
 
+// ---------- Payments / refunds ----------
+router.get('/payments', async (req, res) => {
+  try {
+    const billing = require('../billing');
+    ok(res, { payments: await billing.listPayments(req.query) });
+  } catch (e) { fail(res, e, 500); }
+});
+router.get('/refunds', async (req, res) => {
+  try {
+    const billing = require('../billing');
+    ok(res, { refunds: await billing.listRefunds(req.query) });
+  } catch (e) { fail(res, e, 500); }
+});
+router.post('/payments/:id/refund', async (req, res) => {
+  try {
+    const billing = require('../billing');
+    const result = await billing.adminRefundPayment(Number(req.params.id), req.body || {});
+    await platform.audit(req.session.userId, 'payment.refund', `paymentId=${req.params.id} ${JSON.stringify(result)}`);
+    ok(res, result);
+  } catch (e) { fail(res, e); }
+});
+
 module.exports = router;

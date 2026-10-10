@@ -24,6 +24,7 @@
     "express-session": "^1.18.1",
     "helmet": "^8.0.0",
     "mysql2": "^3.12.0",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "stripe": "^20.4.1"
   }
 }

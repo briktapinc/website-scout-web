@@ -12,10 +12,10 @@ const autoEl = document.getElementById('shell-automation');
 const topTitle = document.getElementById('top-title');
 const toastHost = document.getElementById('toast-host');
 
-const ROUTES = ['dashboard', 'leads', 'websites', 'design', 'outreach', 'pipeline', 'jobs', 'mcp', 'settings', 'admin'];
+const ROUTES = ['dashboard', 'leads', 'websites', 'design', 'outreach', 'pipeline', 'jobs', 'mcp', 'settings', 'billing', 'admin'];
 const ROUTE_LABELS = {
   dashboard: 'Dashboard', leads: 'Leads', websites: 'Websites', design: 'Design', outreach: 'Outreach',
-  pipeline: 'Pipeline', jobs: 'Jobs', mcp: 'MCP', settings: 'Settings', admin: 'Admin',
+  pipeline: 'Pipeline', jobs: 'Jobs', mcp: 'MCP', settings: 'Settings', billing: 'Billing', admin: 'Admin',
 };
 let currentUserIsSuperAdmin = false;
 const LEAD_STATUSES = ['new', 'researching', 'qualified', 'building', 'qa_pending', 'ready', 'outreach_pending',
@@ -2380,9 +2380,11 @@ async function pageAdmin(param) {
     ['overview', 'Overview'],
     ['users', 'Users'],
     ['workspaces', 'Workspaces'],
+    ['payments', 'Payments'],
     ['email', 'Email'],
     ['sms', 'SMS'],
     ['keys', 'API keys'],
+    ['billing', 'Stripe'],
     ['general', 'General'],
     ['audit', 'Audit'],
   ];
@@ -2406,7 +2408,8 @@ async function pageAdmin(param) {
     if (tab === 'overview') await renderAdminOverview(body);
     else if (tab === 'users') await renderAdminUsers(body);
     else if (tab === 'workspaces') await renderAdminWorkspaces(body);
-    else if (tab === 'email' || tab === 'sms' || tab === 'keys' || tab === 'general') await renderAdminSettings(body, tab);
+    else if (tab === 'payments') await renderAdminPayments(body);
+    else if (tab === 'email' || tab === 'sms' || tab === 'keys' || tab === 'general' || tab === 'billing') await renderAdminSettings(body, tab);
     else if (tab === 'audit') await renderAdminAudit(body);
     else body.innerHTML = '<p class="hint">Unknown tab</p>';
   } catch (err) {
@@ -2605,15 +2608,69 @@ async function renderAdminWorkspaces(el) {
   });
 }
 
+async function renderAdminPayments(el) {
+  const [payRes, refRes] = await Promise.all([api.adminPayments(), api.adminRefunds()]);
+  const payments = asList(payRes.data, ['payments']);
+  const refunds = asList(refRes.data, ['refunds']);
+  el.innerHTML = `
+    <div class="panel">
+      <div class="panel-h"><h3>Payments</h3></div>
+      <div class="panel-b">
+        <table><thead><tr><th>When</th><th>User</th><th>Amount</th><th>Status</th><th>Invoice</th><th></th></tr></thead>
+        <tbody>
+          ${payments.map((p) => `<tr>
+            <td>${esc(fmtDate(p.created_at))}</td>
+            <td>${esc(p.user_email || p.user_id || '—')}</td>
+            <td>${esc((Number(p.amount_cents || 0) / 100).toFixed(2))} ${esc(String(p.currency || '').toUpperCase())}</td>
+            <td>${esc(p.status)}</td>
+            <td class="mono">${esc(p.stripe_invoice_id || '')}</td>
+            <td>${p.status === 'succeeded' ? `<button class="btn ghost small" data-refund="${p.id}">Refund</button>` : ''}</td>
+          </tr>`).join('') || '<tr><td colspan="6">No payments yet</td></tr>'}
+        </tbody></table>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-h"><h3>Refunds</h3></div>
+      <div class="panel-b">
+        <table><thead><tr><th>When</th><th>User</th><th>Amount</th><th>Status</th><th>Refund ID</th></tr></thead>
+        <tbody>
+          ${refunds.map((r) => `<tr>
+            <td>${esc(fmtDate(r.created_at))}</td>
+            <td>${esc(r.user_email || r.user_id || '—')}</td>
+            <td>${esc((Number(r.amount_cents || 0) / 100).toFixed(2))} ${esc(String(r.currency || '').toUpperCase())}</td>
+            <td>${esc(r.status)}</td>
+            <td class="mono">${esc(r.stripe_refund_id || '')}</td>
+          </tr>`).join('') || '<tr><td colspan="5">No refunds yet</td></tr>'}
+        </tbody></table>
+      </div>
+    </div>`;
+  $$('[data-refund]').forEach((b) => b.onclick = async () => {
+    if (!confirm('Refund this payment in Stripe?')) return;
+    try {
+      await api.adminRefundPayment(b.dataset.refund, {});
+      toast('Refund created', 'ok');
+      pageAdmin('payments');
+    } catch (err) { toast(err.message, 'err'); }
+  });
+}
+
 async function renderAdminSettings(el, group) {
   const res = await api.adminSettings();
   const settings = res.data.settings || {};
   const defs = (res.data.defs || []).filter((d) => d.group === group);
-  const title = { email: 'Email / SMTP', sms: 'SMS', keys: 'Default API keys', general: 'General' }[group] || group;
+  const title = {
+    email: 'Email / SMTP', sms: 'SMS', keys: 'Default API keys', general: 'General',
+    billing: 'Stripe & subscription',
+  }[group] || group;
+  const webhookHint = group === 'billing'
+    ? `<p class="hint">Webhook endpoint (sign with your webhook secret): <span class="mono">${esc(window.location.origin)}/api/v1/billing/webhook</span><br/>
+       Events: <span class="mono">checkout.session.completed, customer.subscription.*, invoice.paid, invoice.payment_failed, charge.refunded</span><br/>
+       Create one Product + monthly Price in Stripe, paste the <span class="mono">price_…</span> id below. Prefer a restricted API key.</p>`
+    : '<span class="hint">Defaults apply to new workspaces. Secrets are write-only.</span>';
   el.innerHTML = `
     <div class="panel">
-      <div class="panel-h"><h3>${esc(title)}</h3>
-        <span class="hint">Defaults apply to new workspaces. Secrets are write-only.</span></div>
+      <div class="panel-h"><h3>${esc(title)}</h3></div>
+      <div class="panel-b" style="padding-bottom:0">${webhookHint}</div>
       <div class="panel-b">
         <form id="admin-set-form" class="stack">
           ${defs.map((d) => {
@@ -2659,6 +2716,93 @@ async function renderAdminSettings(el, group) {
   };
 }
 
+async function pageBilling(param, query) {
+  const summary = (await api.billingSummary()).data;
+  const checkoutFlag = (query && query.checkout) || '';
+  view.innerHTML = `
+    <div class="page-head">
+      <div>
+        <h1>Billing & subscription</h1>
+        <p class="lede">${esc(summary.amountLabel || 'Monthly subscription')} · ${esc(summary.email)}</p>
+      </div>
+    </div>
+    ${checkoutFlag === 'success' ? '<div class="alert ok"><strong>Payment received.</strong> Subscription status updates when Stripe confirms via webhook.</div>' : ''}
+    ${checkoutFlag === 'cancel' ? '<div class="alert warn">Checkout canceled — no charge was made.</div>' : ''}
+    <div class="stats-cards">
+      <div class="stat-card"><div class="n" style="font-size:1.2rem">${esc(pretty(summary.subscriptionStatus || 'none'))}</div><div class="l">Status</div></div>
+      <div class="stat-card"><div class="n" style="font-size:1.2rem">${summary.subscribed ? 'Yes' : 'No'}</div><div class="l">Access</div></div>
+      <div class="stat-card"><div class="n" style="font-size:1.05rem">${esc(fmtDate(summary.currentPeriodEnd) || '—')}</div><div class="l">Current period end</div></div>
+    </div>
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-h"><h3>Subscription</h3></div>
+      <div class="panel-b">
+        <p class="hint">${summary.isSuperAdmin ? 'Super admins have full access without a paid plan.' : 'One fixed monthly payment via Stripe Checkout. Manage card and cancel in the customer portal.'}</p>
+        <div class="row actions" style="margin-top:0.75rem">
+          ${!summary.subscribed || summary.subscriptionStatus === 'canceled' || summary.subscriptionStatus === 'none'
+            ? '<button class="btn" type="button" id="bill-subscribe">Subscribe with Stripe</button>'
+            : ''}
+          ${summary.hasCustomer ? '<button class="btn ghost" type="button" id="bill-portal">Manage billing</button>' : ''}
+        </div>
+        <div class="msg" id="bill-msg"></div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-h"><h3>Payment history</h3></div>
+      <div class="panel-b">
+        <table><thead><tr><th>When</th><th>Amount</th><th>Status</th><th>Description</th></tr></thead>
+        <tbody>
+          ${(summary.payments || []).map((p) => `<tr>
+            <td>${esc(fmtDate(p.created_at))}</td>
+            <td>${esc((Number(p.amount_cents || 0) / 100).toFixed(2))} ${esc(String(p.currency || '').toUpperCase())}</td>
+            <td>${esc(p.status)}</td>
+            <td>${esc(p.description || '')}</td>
+          </tr>`).join('') || '<tr><td colspan="4">No payments yet</td></tr>'}
+        </tbody></table>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-h"><h3>Delete account</h3></div>
+      <div class="panel-b">
+        <p class="hint">Cancels your Stripe subscription (if any), disables login, and removes workspace memberships. Payment records are kept for the platform.</p>
+        <button class="btn danger" type="button" id="bill-delete">Delete my account</button>
+      </div>
+    </div>`;
+
+  const msg = $('#bill-msg');
+  const subBtn = $('#bill-subscribe');
+  if (subBtn) {
+    subBtn.onclick = () => safeRun(subBtn, async () => {
+      const r = await api.billingCheckout();
+      if (r.data && r.data.url) window.location.href = r.data.url;
+      else throw new Error('No checkout URL returned');
+    });
+  }
+  const portalBtn = $('#bill-portal');
+  if (portalBtn) {
+    portalBtn.onclick = () => safeRun(portalBtn, async () => {
+      const r = await api.billingPortal();
+      if (r.data && r.data.url) window.location.href = r.data.url;
+      else throw new Error('No portal URL returned');
+    });
+  }
+  $('#bill-delete').onclick = async () => {
+    if (!confirm('Permanently delete your account? This cannot be undone.')) return;
+    if (prompt('Type DELETE to confirm') !== 'DELETE') return;
+    try {
+      await api.deleteAccount();
+      localStorage.removeItem('scout.workspaceId');
+      toast('Account deleted', 'ok');
+      renderAuth();
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  };
+  if (msg && !summary.priceId && !summary.isSuperAdmin) {
+    msg.textContent = 'Billing is not configured yet (missing Stripe price). Ask your admin.';
+    msg.className = 'msg error';
+  }
+}
+
 async function renderAdminAudit(el) {
   const rows = asList((await api.adminAudit({ limit: 80 })).data, ['rows']);
   el.innerHTML = `
@@ -2681,7 +2825,7 @@ async function renderAdminAudit(el) {
 const PAGES = {
   dashboard: pageDashboard, leads: pageLeads, websites: pageWebsites, design: pageDesign,
   outreach: pageOutreach, pipeline: pagePipeline, jobs: pageJobs, mcp: pageMcp, settings: pageSettings,
-  admin: pageAdmin,
+  billing: pageBilling, admin: pageAdmin,
 };
 
 async function navigate() {

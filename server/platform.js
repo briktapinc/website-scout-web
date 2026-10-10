@@ -16,6 +16,8 @@ const PLATFORM_SECRET_KEYS = [
   'fal.api_key',
   'sms.auth_token',
   'sms.api_key',
+  'stripe.secret_key',
+  'stripe.webhook_secret',
 ];
 
 /** Catalog of platform settings shown in the admin UI. */
@@ -62,6 +64,14 @@ const PLATFORM_SETTING_DEFS = [
   { key: 'cf.account_id', group: 'keys', label: 'Cloudflare account id', default: '' },
   { key: 'cf.project', group: 'keys', label: 'Cloudflare Pages project', default: '' },
   { key: 'cf.preview_domain', group: 'keys', label: 'Cloudflare preview domain', default: '' },
+
+  // Stripe / billing
+  { key: 'stripe.secret_key', group: 'billing', label: 'Stripe secret key (sk_… or rk_…)', default: '', secret: true },
+  { key: 'stripe.publishable_key', group: 'billing', label: 'Stripe publishable key (pk_…)', default: '' },
+  { key: 'stripe.webhook_secret', group: 'billing', label: 'Stripe webhook signing secret (whsec_…)', default: '', secret: true },
+  { key: 'stripe.price_id', group: 'billing', label: 'Stripe Price ID (price_…) for monthly plan', default: '' },
+  { key: 'billing.amount_label', group: 'billing', label: 'Plan label shown to users', default: 'Monthly subscription' },
+  { key: 'billing.require_subscription', group: 'billing', label: 'Require active subscription (1/0)', default: '1' },
 ];
 
 const WORKSPACE_SEED_KEYS = PLATFORM_SETTING_DEFS

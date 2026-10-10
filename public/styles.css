@@ -182,6 +182,7 @@ a { color: var(--accent-dark); }
 .alert { padding: 12px 14px; border-radius: var(--radius); margin-bottom: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .alert.warn { background: var(--warn-soft); border: 1px solid #f0d48a; }
 .alert.danger { background: var(--danger-soft); border: 1px solid #f3c1bc; }
+.alert.ok { background: var(--ok-soft); border: 1px solid #b7e0c9; }
 
 /* ---------- Tables ---------- */
 .table-wrap {

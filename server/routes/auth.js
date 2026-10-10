@@ -105,15 +105,19 @@ router.post('/logout', (req, res) => {
 router.get('/me', requireAuth, async (req, res, next) => {
   try {
     const rows = await require('../db').query(
-      'SELECT id, email, name, is_super_admin, status, created_at FROM users WHERE id = :id LIMIT 1',
+      `SELECT id, email, name, is_super_admin, status, created_at,
+              subscription_status, current_period_end, deleted_at
+       FROM users WHERE id = :id LIMIT 1`,
       { id: req.session.userId }
     );
     const user = rows[0];
     if (!user) return res.status(401).json({ ok: false, error: 'AUTH_REQUIRED' });
-    if (String(user.status || 'active') === 'disabled') {
+    if (String(user.status || 'active') === 'disabled' || user.deleted_at) {
       return res.status(403).json({ ok: false, error: 'ACCOUNT_DISABLED' });
     }
     const isSuperAdmin = Number(user.is_super_admin) === 1;
+    const billing = require('../billing');
+    const subscribed = billing.isSubscribed(user);
     const workspaces = await listWorkspacesForUser(user.id);
     res.json({
       ok: true,
@@ -124,10 +128,14 @@ router.get('/me', requireAuth, async (req, res, next) => {
           name: user.name,
           created_at: user.created_at,
           isSuperAdmin,
+          subscriptionStatus: user.subscription_status || 'none',
+          currentPeriodEnd: user.current_period_end,
+          subscribed,
         },
         workspaceId: req.session.workspaceId || (workspaces[0] && workspaces[0].id) || null,
         workspaces,
         isSuperAdmin,
+        subscribed,
       },
     });
   } catch (e) {

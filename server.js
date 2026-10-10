@@ -21,6 +21,7 @@ const domainApi = require('./server/routes/domainApi');
 const jobsRoutes = require('./server/routes/jobs');
 const mcpAdminRoutes = require('./server/routes/mcpAdmin');
 const adminRoutes = require('./server/routes/admin');
+const billingRoutes = require('./server/routes/billing');
 
 const PORT = Number(process.env.PORT || 3000);
 const app = express();
@@ -34,6 +35,11 @@ app.use(cors({
   origin: true,
   credentials: true,
 }));
+
+// Stripe webhooks need the raw body for signature verification — mount before JSON parser.
+const stripeWebhook = require('./server/routes/stripeWebhook');
+app.use('/api/v1/billing/webhook', express.raw({ type: 'application/json' }), stripeWebhook);
+
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
@@ -77,6 +83,7 @@ app.get('/health', async (_req, res) => {
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/billing', billingRoutes);
 app.use('/api/v1', domainApi);
 app.use('/api/v1/jobs', jobsRoutes);
 app.use('/api/v1/mcp', mcpAdminRoutes);

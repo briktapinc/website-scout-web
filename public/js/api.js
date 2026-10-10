@@ -223,5 +223,14 @@ window.ScoutApi = (() => {
     adminSettingsSave: (settings) => put('/admin/settings', { settings }),
     adminSettingsSecret: (key, value) => put('/admin/settings/secret', { key, value }),
     adminPushDefaults: (body) => post('/admin/settings/push', body || {}),
+    adminPayments: (q) => get('/admin/payments', q),
+    adminRefunds: (q) => get('/admin/refunds', q),
+    adminRefundPayment: (id, body) => post('/admin/payments/' + id + '/refund', body || {}),
+
+    // ---- Billing (user) ----
+    billingSummary: () => get('/billing/summary'),
+    billingCheckout: () => post('/billing/checkout', {}),
+    billingPortal: () => post('/billing/portal', {}),
+    deleteAccount: () => del('/billing/account', { confirm: 'DELETE' }),
   };
 })();

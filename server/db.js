@@ -165,6 +165,12 @@ async function migrate() {
     try { ensureColumnSqlite(db, 'users', 'is_super_admin', 'INTEGER NOT NULL DEFAULT 0'); } catch { /* */ }
     try { ensureColumnSqlite(db, 'users', 'status', "TEXT NOT NULL DEFAULT 'active'"); } catch { /* */ }
     try { ensureColumnSqlite(db, 'users', 'last_login_at', 'TEXT'); } catch { /* */ }
+    try { ensureColumnSqlite(db, 'users', 'stripe_customer_id', 'TEXT'); } catch { /* */ }
+    try { ensureColumnSqlite(db, 'users', 'stripe_subscription_id', 'TEXT'); } catch { /* */ }
+    try { ensureColumnSqlite(db, 'users', 'subscription_status', "TEXT NOT NULL DEFAULT 'none'"); } catch { /* */ }
+    try { ensureColumnSqlite(db, 'users', 'subscription_price_id', 'TEXT'); } catch { /* */ }
+    try { ensureColumnSqlite(db, 'users', 'current_period_end', 'TEXT'); } catch { /* */ }
+    try { ensureColumnSqlite(db, 'users', 'deleted_at', 'TEXT'); } catch { /* */ }
     db.exec(`
       CREATE TABLE IF NOT EXISTS platform_settings (
         key TEXT NOT NULL PRIMARY KEY,
@@ -177,6 +183,29 @@ async function migrate() {
         action TEXT NOT NULL,
         detail TEXT,
         at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        stripe_invoice_id TEXT,
+        stripe_payment_intent_id TEXT,
+        stripe_charge_id TEXT,
+        amount_cents INTEGER NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'usd',
+        status TEXT NOT NULL DEFAULT 'open',
+        description TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS refunds (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        payment_id INTEGER,
+        user_id INTEGER,
+        stripe_refund_id TEXT,
+        amount_cents INTEGER NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'usd',
+        status TEXT NOT NULL DEFAULT 'succeeded',
+        reason TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
     return;
@@ -195,6 +224,12 @@ async function migrate() {
     await ensureColumnMysql(conn, 'users', 'is_super_admin', 'TINYINT(1) NOT NULL DEFAULT 0');
     await ensureColumnMysql(conn, 'users', 'status', "VARCHAR(20) NOT NULL DEFAULT 'active'");
     await ensureColumnMysql(conn, 'users', 'last_login_at', 'DATETIME NULL');
+    await ensureColumnMysql(conn, 'users', 'stripe_customer_id', 'VARCHAR(120) NULL');
+    await ensureColumnMysql(conn, 'users', 'stripe_subscription_id', 'VARCHAR(120) NULL');
+    await ensureColumnMysql(conn, 'users', 'subscription_status', "VARCHAR(40) NOT NULL DEFAULT 'none'");
+    await ensureColumnMysql(conn, 'users', 'subscription_price_id', 'VARCHAR(120) NULL');
+    await ensureColumnMysql(conn, 'users', 'current_period_end', 'DATETIME NULL');
+    await ensureColumnMysql(conn, 'users', 'deleted_at', 'DATETIME NULL');
     await conn.query(`
       CREATE TABLE IF NOT EXISTS platform_settings (
         \`key\` VARCHAR(120) NOT NULL PRIMARY KEY,
@@ -210,6 +245,39 @@ async function migrate() {
         detail TEXT NULL,
         at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         KEY idx_platform_audit_at (at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS payments (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id BIGINT UNSIGNED NULL,
+        stripe_invoice_id VARCHAR(120) NULL,
+        stripe_payment_intent_id VARCHAR(120) NULL,
+        stripe_charge_id VARCHAR(120) NULL,
+        amount_cents INT NOT NULL DEFAULT 0,
+        currency VARCHAR(12) NOT NULL DEFAULT 'usd',
+        status VARCHAR(40) NOT NULL DEFAULT 'open',
+        description TEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_payments_invoice (stripe_invoice_id),
+        KEY idx_payments_user (user_id),
+        KEY idx_payments_charge (stripe_charge_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS refunds (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        payment_id BIGINT UNSIGNED NULL,
+        user_id BIGINT UNSIGNED NULL,
+        stripe_refund_id VARCHAR(120) NULL,
+        amount_cents INT NOT NULL DEFAULT 0,
+        currency VARCHAR(12) NOT NULL DEFAULT 'usd',
+        status VARCHAR(40) NOT NULL DEFAULT 'succeeded',
+        reason VARCHAR(80) NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_refunds_stripe (stripe_refund_id),
+        KEY idx_refunds_user (user_id),
+        KEY idx_refunds_payment (payment_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
   });
