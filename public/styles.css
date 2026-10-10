@@ -414,6 +414,12 @@ details[open] > summary { margin-bottom: 8px; }
 .auth-card .sub { margin: 0 0 1rem; }
 .auth-card .tabs { width: 100%; }
 .auth-card .tabs button { flex: 1; }
+.auth-card .auth-links { display: flex; justify-content: space-between; gap: 12px; margin-top: 12px; font-size: 13px; }
+.auth-card .auth-links button { background: none; border: 0; padding: 0; color: var(--accent-dark); cursor: pointer; font: inherit; text-decoration: underline; }
+.auth-card .terms-row { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.4; margin: 0.5rem 0 1rem; }
+.auth-card .terms-row input { margin-top: 3px; }
+.shell-banner { margin: 0; border-radius: 0; border-left: 0; border-right: 0; }
+.shell-banner a { font-weight: 650; }
 
 @media (max-width: 980px) {
   .grid.cols-2, .grid.cols-3, .detail-grid { grid-template-columns: 1fr; }

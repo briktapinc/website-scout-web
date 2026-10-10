@@ -22,6 +22,7 @@ const jobsRoutes = require('./server/routes/jobs');
 const mcpAdminRoutes = require('./server/routes/mcpAdmin');
 const adminRoutes = require('./server/routes/admin');
 const billingRoutes = require('./server/routes/billing');
+const inviteRoutes = require('./server/routes/invites');
 
 const PORT = Number(process.env.PORT || 3000);
 const app = express();
@@ -81,12 +82,17 @@ app.get('/health', async (_req, res) => {
   }
 });
 
+const { requireSubscription } = require('./server/middleware');
+
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/admin', adminRoutes);
+// Billing stays reachable without a paid plan (checkout / portal / delete).
 app.use('/api/v1/billing', billingRoutes);
-app.use('/api/v1', domainApi);
-app.use('/api/v1/jobs', jobsRoutes);
-app.use('/api/v1/mcp', mcpAdminRoutes);
+app.use('/api/v1/invites', inviteRoutes);
+// Product APIs + jobs require an active subscription when the platform flag is on.
+app.use('/api/v1/jobs', requireSubscription, jobsRoutes);
+app.use('/api/v1/mcp', requireSubscription, mcpAdminRoutes);
+app.use('/api/v1', requireSubscription, domainApi);
 
 async function mcpHandler(req, res) {
   try {
@@ -96,6 +102,25 @@ async function mcpHandler(req, res) {
     }
     const ws = await findWorkspaceByToken(auth.slice(7).trim());
     if (!ws) return res.status(401).json({ ok: false, error: 'INVALID_TOKEN' });
+
+    // Mirror product paywall for MCP bearer access
+    {
+      const billing = require('./server/billing');
+      if (await billing.requireSubscriptionEnabled()) {
+        const { query } = require('./server/db');
+        const members = await query(
+          `SELECT u.id, u.is_super_admin, u.subscription_status, u.status, u.deleted_at
+           FROM workspace_members m
+           JOIN users u ON u.id = m.user_id
+           WHERE m.workspace_id = :workspaceId AND m.role IN ('owner','admin')`,
+          { workspaceId: ws.workspace_id }
+        );
+        const ok = (members || []).some((u) => billing.isSubscribed(u));
+        if (!ok) {
+          return res.status(402).json({ ok: false, error: 'SUBSCRIPTION_REQUIRED', code: 'SUBSCRIPTION_REQUIRED' });
+        }
+      }
+    }
 
     if (req.method === 'GET') {
       return res.json({

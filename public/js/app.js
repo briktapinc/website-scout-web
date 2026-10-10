@@ -18,6 +18,9 @@ const ROUTE_LABELS = {
   pipeline: 'Pipeline', jobs: 'Jobs', mcp: 'MCP', settings: 'Settings', billing: 'Billing', admin: 'Admin',
 };
 let currentUserIsSuperAdmin = false;
+let requireSubscription = false;
+let userSubscribed = true;
+let subscriptionStatus = 'none';
 const LEAD_STATUSES = ['new', 'researching', 'qualified', 'building', 'qa_pending', 'ready', 'outreach_pending',
   'contacted', 'engaged', 'claimed', 'trial', 'customer', 'lost'];
 const DESIGN_STATUSES = ['draft', 'waiting_on_agent', 'questions_pending', 'in_progress', 'delivered'];
@@ -333,35 +336,106 @@ function mountPreview(host, renderFn) {
 /* Auth + shell                                                        */
 /* ------------------------------------------------------------------ */
 
-function renderAuth() {
+function authHashMode() {
+  const { route, param } = parseHash();
+  if (route === 'reset' && param) return { mode: 'reset', token: param };
+  if (route === 'invite' && param) return { mode: 'invite', token: param };
+  if (route === 'forgot') return { mode: 'forgot', token: '' };
+  return { mode: 'login', token: '' };
+}
+
+function renderAuth(forcedMode) {
   authGate.classList.remove('hidden');
   shell.classList.add('hidden');
+  const hashMode = authHashMode();
+  let mode = forcedMode || hashMode.mode;
+  const resetToken = hashMode.token;
+  const inviteToken = mode === 'invite' ? hashMode.token : '';
+
+  const inviteNote = inviteToken
+    ? '<p class="hint">You were invited — sign in or register with the <strong>same email</strong> the invite was sent to, then we will join you to the workspace.</p>'
+    : '';
+
   authGate.innerHTML = `
     <div class="auth-card">
       <div class="auth-brand"><span class="brand-mark" style="background:#171512;color:#f3ead8">WS</span><h1>Website Scout</h1></div>
       <p class="sub">Local business desk — sign in to your workspace.</p>
-      <div class="tabs">
+      ${inviteNote}
+      <div class="tabs" id="auth-tabs">
         <button type="button" class="active" data-tab="login">Log in</button>
         <button type="button" data-tab="register">Register</button>
       </div>
       <form id="auth-form">
-        <div class="field"><label for="a-email">Email</label><input id="a-email" name="email" type="email" required autocomplete="username" /></div>
-        <div class="field"><label for="a-pass">Password</label><input id="a-pass" name="password" type="password" required minlength="8" autocomplete="current-password" /></div>
+        <div id="auth-login-fields">
+          <div class="field"><label for="a-email">Email</label><input id="a-email" name="email" type="email" autocomplete="username" /></div>
+          <div class="field" id="pass-field"><label for="a-pass">Password</label><input id="a-pass" name="password" type="password" minlength="8" autocomplete="current-password" /></div>
+        </div>
         <div id="reg-extra" class="hidden">
           <div class="field"><label for="a-name">Your name</label><input id="a-name" name="name" type="text" /></div>
           <div class="field"><label for="a-ws">Workspace name</label><input id="a-ws" name="workspaceName" type="text" placeholder="My agency" /></div>
+          <label class="terms-row">
+            <input type="checkbox" name="acceptTerms" id="a-terms" value="1" />
+            <span>I agree to the <a href="/legal/terms.html" target="_blank" rel="noopener">Terms of Service</a> and <a href="/legal/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span>
+          </label>
         </div>
-        <button class="btn primary" type="submit" style="width:100%">Continue</button>
+        <div id="reset-extra" class="hidden">
+          <div class="field"><label for="a-pass2">New password</label><input id="a-pass2" name="password2" type="password" minlength="8" autocomplete="new-password" /></div>
+        </div>
+        <button class="btn primary" type="submit" id="auth-submit" style="width:100%">Continue</button>
         <div class="msg" id="auth-msg"></div>
       </form>
+      <div class="auth-links" id="auth-links">
+        <button type="button" data-goto="forgot">Forgot password?</button>
+        <a href="/legal/terms.html" target="_blank" rel="noopener">Terms</a>
+      </div>
     </div>`;
 
-  let mode = 'login';
+  const tabs = $('#auth-tabs', authGate);
+  const regExtra = $('#reg-extra', authGate);
+  const resetExtra = $('#reset-extra', authGate);
+  const passField = $('#pass-field', authGate);
+  const submitBtn = $('#auth-submit', authGate);
+  const links = $('#auth-links', authGate);
+  const emailInput = $('#a-email', authGate);
+  const passInput = $('#a-pass', authGate);
+
+  function paintMode() {
+    const isForgot = mode === 'forgot';
+    const isReset = mode === 'reset';
+    const isReg = mode === 'register';
+    tabs.classList.toggle('hidden', isForgot || isReset);
+    regExtra.classList.toggle('hidden', !isReg);
+    resetExtra.classList.toggle('hidden', !isReset);
+    passField.classList.toggle('hidden', isForgot);
+    emailInput.required = !isReset;
+    passInput.required = !isForgot && !isReset;
+    if (isReset) {
+      passInput.name = 'password';
+      passInput.required = true;
+      passInput.autocomplete = 'new-password';
+      $('#a-pass2', authGate).required = true;
+    }
+    submitBtn.textContent = isForgot ? 'Send reset link' : isReset ? 'Set new password' : 'Continue';
+    links.innerHTML = isForgot || isReset
+      ? '<button type="button" data-goto="login">Back to log in</button>'
+      : '<button type="button" data-goto="forgot">Forgot password?</button><a href="/legal/terms.html" target="_blank" rel="noopener">Terms</a>';
+    $$('[data-tab]', authGate).forEach((b) => b.classList.toggle('active', b.dataset.tab === mode));
+    $$('[data-goto]', links).forEach((btn) => {
+      btn.onclick = () => {
+        mode = btn.dataset.goto;
+        if (mode === 'login') window.location.hash = '#/dashboard';
+        else if (mode === 'forgot') window.location.hash = '#/forgot';
+        paintMode();
+      };
+    });
+  }
+
+  paintMode();
+
   $$('[data-tab]', authGate).forEach((btn) => {
     btn.addEventListener('click', () => {
       mode = btn.dataset.tab;
-      $$('[data-tab]', authGate).forEach((b) => b.classList.toggle('active', b === btn));
-      $('#reg-extra', authGate).classList.toggle('hidden', mode !== 'register');
+      paintMode();
     });
   });
 
@@ -371,13 +445,69 @@ function renderAuth() {
     const msg = $('#auth-msg', authGate);
     setMsg(msg, 'Working…');
     try {
+      if (mode === 'forgot') {
+        const r = await api.forgotPassword(body.email);
+        const data = r.data || {};
+        if (data.resetLink) {
+          setMsg(msg, 'SMTP not configured — use this link: ' + data.resetLink, 'ok');
+        } else {
+          setMsg(msg, 'If that email exists, a reset link was sent.', 'ok');
+        }
+        return;
+      }
+      if (mode === 'reset') {
+        if (body.password !== body.password2) throw new Error('Passwords do not match');
+        await api.resetPassword(resetToken, body.password);
+        setMsg(msg, 'Password updated. You can log in.', 'ok');
+        mode = 'login';
+        window.location.hash = '#/dashboard';
+        paintMode();
+        return;
+      }
+      if (mode === 'register') {
+        if (!$('#a-terms', authGate).checked) throw new Error('Accept the Terms and Privacy Policy to continue');
+        body.acceptTerms = true;
+      }
       const res = mode === 'login' ? await api.login(body) : await api.register(body);
       api.setWorkspaceId(res.data.workspaceId);
+      if (inviteToken) {
+        try {
+          const inv = await api.acceptInvite(inviteToken);
+          if (inv.data && inv.data.workspaceId) {
+            api.setWorkspaceId(inv.data.workspaceId);
+            res.data.workspaceId = inv.data.workspaceId;
+            if (inv.data.workspaces) res.data.workspaces = inv.data.workspaces;
+          }
+          toast('Invite accepted', 'ok');
+          window.location.hash = '#/dashboard';
+        } catch (invErr) {
+          toast(invErr.message || 'Invite failed', 'err');
+        }
+      }
       await bootApp(res.data);
     } catch (err) {
       setMsg(msg, err.message, 'error');
     }
   });
+}
+
+function updateBillingBanner() {
+  const el = document.getElementById('billing-banner');
+  if (!el) return;
+  if (subscriptionStatus === 'past_due') {
+    el.classList.remove('hidden');
+    el.innerHTML = `<strong>Payment past due.</strong> Update your card to keep access.
+      <a href="#/billing">Open Billing</a>`;
+    return;
+  }
+  if (requireSubscription && !userSubscribed && !currentUserIsSuperAdmin) {
+    el.classList.remove('hidden');
+    el.innerHTML = `<strong>Subscription required.</strong> Subscribe to use Website Scout.
+      <a href="#/billing">Go to Billing</a>`;
+    return;
+  }
+  el.classList.add('hidden');
+  el.innerHTML = '';
 }
 
 function fillWorkspaces(workspaces, currentId) {
@@ -411,10 +541,32 @@ async function bootApp(meData) {
   authGate.classList.add('hidden');
   shell.classList.remove('hidden');
   currentUserIsSuperAdmin = !!(meData.isSuperAdmin || (meData.user && meData.user.isSuperAdmin));
+  requireSubscription = !!meData.requireSubscription;
+  userSubscribed = meData.subscribed != null
+    ? !!meData.subscribed
+    : !!(meData.user && meData.user.subscribed);
+  subscriptionStatus = (meData.user && meData.user.subscriptionStatus) || 'none';
   const navAdmin = document.getElementById('nav-admin');
   if (navAdmin) navAdmin.classList.toggle('hidden', !currentUserIsSuperAdmin);
   fillWorkspaces(meData.workspaces, meData.workspaceId || api.getWorkspaceId());
-  await refreshAutomation();
+  updateBillingBanner();
+
+  const { route, param } = parseHash();
+  if (route === 'invite' && param) {
+    try {
+      const inv = await api.acceptInvite(param);
+      if (inv.data && inv.data.workspaceId) {
+        api.setWorkspaceId(inv.data.workspaceId);
+        if (inv.data.workspaces) fillWorkspaces(inv.data.workspaces, inv.data.workspaceId);
+      }
+      toast('Invite accepted', 'ok');
+      window.location.hash = '#/dashboard';
+    } catch (err) {
+      toast(err.message || 'Invite failed', 'err');
+    }
+  }
+
+  try { await refreshAutomation(); } catch { /* paywalled */ }
   navigate();
 }
 
@@ -2161,9 +2313,22 @@ async function pageSettings() {
     <div class="page-head"><div><h1>Settings</h1><p class="lede">Provider keys, spend limits, prompts, email, publishing and the kill switch for this workspace. Secrets are write-only: they are never shown again after saving. Changing settings requires an owner or admin role.</p></div></div>
     <div class="settings-layout">
       <nav class="settings-nav" aria-label="Settings sections">
-        ${[['sec-ai', 'AI'], ['sec-cost', 'Cost'], ['sec-prompts', 'Prompts'], ['sec-automation', 'Automation'], ['sec-agent', 'Design agent'], ['sec-learning', 'Design learning'], ['sec-discovery', 'Discovery'], ['sec-smtp', 'Email'], ['sec-cf', 'Cloudflare'], ['sec-keys', 'Provider keys'], ['sec-mail', 'Footer & scoring']].map(([id, l]) => `<button data-act="goto" data-id="${id}">${esc(l)}</button>`).join('')}
+        ${[['sec-team', 'Team'], ['sec-ai', 'AI'], ['sec-cost', 'Cost'], ['sec-prompts', 'Prompts'], ['sec-automation', 'Automation'], ['sec-agent', 'Design agent'], ['sec-learning', 'Design learning'], ['sec-discovery', 'Discovery'], ['sec-smtp', 'Email'], ['sec-cf', 'Cloudflare'], ['sec-keys', 'Provider keys'], ['sec-mail', 'Footer & scoring']].map(([id, l]) => `<button data-act="goto" data-id="${id}">${esc(l)}</button>`).join('')}
       </nav>
       <div class="settings-main">
+
+        <section class="card" id="sec-team"><h2>Team invites</h2>
+          <p class="hint">Invite teammates by email. They must register or sign in with that exact address. Owners and admins can invite.</p>
+          <form id="invite-form" class="row" style="align-items:flex-end">
+            <div class="field" style="flex:2"><label for="inv-email">Email</label><input id="inv-email" name="email" type="email" required placeholder="teammate@example.com" /></div>
+            <div class="field"><label for="inv-role">Role</label>
+              <select id="inv-role" name="role"><option value="member">Member</option><option value="admin">Admin</option><option value="owner">Owner</option></select>
+            </div>
+            <button class="btn primary" type="submit">Send invite</button>
+          </form>
+          <div class="msg" id="inv-msg"></div>
+          <div id="inv-list" style="margin-top:14px"><p class="hint">Loading invites…</p></div>
+        </section>
 
         <section class="card" id="sec-ai"><h2>AI provider</h2>
           <p class="hint">Each task can use its own model; a blank row uses the default.</p>
@@ -2275,6 +2440,40 @@ async function pageSettings() {
     </div>`;
 
   mountLearning($('#st-learning'));
+
+  async function refreshInvites() {
+    const host = $('#inv-list');
+    if (!host) return;
+    try {
+      const rows = asList((await api.invitesList()).data, ['invites', 'rows']);
+      host.innerHTML = `<table><thead><tr><th>Email</th><th>Role</th><th>Expires</th><th>Status</th></tr></thead><tbody>
+        ${rows.map((r) => `<tr>
+          <td>${esc(r.email)}</td><td>${esc(r.role)}</td><td>${esc(fmtDate(r.expires_at))}</td>
+          <td>${r.accepted_at ? '<span class="badge ok">accepted</span>' : '<span class="badge">pending</span>'}</td>
+        </tr>`).join('') || '<tr><td colspan="4">No invites yet</td></tr>'}
+      </tbody></table>`;
+    } catch (err) {
+      host.innerHTML = `<p class="hint">${esc(err.message || 'Could not load invites')}</p>`;
+    }
+  }
+  refreshInvites();
+  const invForm = $('#invite-form');
+  if (invForm) {
+    invForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const msg = $('#inv-msg');
+      setMsg(msg, 'Sending…');
+      try {
+        const body = formObject(e.target);
+        const r = await api.invitesCreate(body);
+        const data = r.data || {};
+        if (data.link) setMsg(msg, 'Invite created (email not sent). Link: ' + data.link, 'ok');
+        else setMsg(msg, data.emailed ? 'Invite emailed.' : 'Invite created.', 'ok');
+        e.target.reset();
+        refreshInvites();
+      } catch (err) { setMsg(msg, err.message, 'err'); }
+    };
+  }
 
   const loadPrompt = () => {
     const p = prompts.find((x) => x.key === $('#pr-sel').value);
@@ -2728,6 +2927,8 @@ async function pageBilling(param, query) {
     </div>
     ${checkoutFlag === 'success' ? '<div class="alert ok"><strong>Payment received.</strong> Subscription status updates when Stripe confirms via webhook.</div>' : ''}
     ${checkoutFlag === 'cancel' ? '<div class="alert warn">Checkout canceled — no charge was made.</div>' : ''}
+    ${summary.subscriptionStatus === 'past_due' ? '<div class="alert danger"><strong>Payment failed.</strong> Update your payment method in the customer portal to avoid losing access.</div>' : ''}
+    ${requireSubscription && !summary.subscribed && !summary.isSuperAdmin ? '<div class="alert warn"><strong>Subscribe to unlock the product.</strong> Leads, websites, design, outreach and MCP stay locked until billing is active.</div>' : ''}
     <div class="stats-cards">
       <div class="stat-card"><div class="n" style="font-size:1.2rem">${esc(pretty(summary.subscriptionStatus || 'none'))}</div><div class="l">Status</div></div>
       <div class="stat-card"><div class="n" style="font-size:1.2rem">${summary.subscribed ? 'Yes' : 'No'}</div><div class="l">Access</div></div>
@@ -2736,7 +2937,7 @@ async function pageBilling(param, query) {
     <div class="panel" style="margin-top:1rem">
       <div class="panel-h"><h3>Subscription</h3></div>
       <div class="panel-b">
-        <p class="hint">${summary.isSuperAdmin ? 'Super admins have full access without a paid plan.' : 'One fixed monthly payment via Stripe Checkout. Manage card and cancel in the customer portal.'}</p>
+        <p class="hint">${summary.isSuperAdmin ? 'Super admins have full access without a paid plan.' : (summary.trialing || summary.subscriptionStatus === 'trialing' ? 'You are on a trial — subscribe before it ends to keep access.' : 'One fixed monthly payment via Stripe Checkout. Manage card and cancel in the customer portal.')}</p>
         <div class="row actions" style="margin-top:0.75rem">
           ${!summary.subscribed || summary.subscriptionStatus === 'canceled' || summary.subscriptionStatus === 'none'
             ? '<button class="btn" type="button" id="bill-subscribe">Subscribe with Stripe</button>'
@@ -2801,6 +3002,10 @@ async function pageBilling(param, query) {
     msg.textContent = 'Billing is not configured yet (missing Stripe price). Ask your admin.';
     msg.className = 'msg error';
   }
+  requireSubscription = !!summary.requireSubscription || requireSubscription;
+  userSubscribed = !!summary.subscribed;
+  subscriptionStatus = summary.subscriptionStatus || subscriptionStatus;
+  updateBillingBanner();
 }
 
 async function renderAdminAudit(el) {
@@ -2831,7 +3036,31 @@ const PAGES = {
 async function navigate() {
   closeNav();
   Array.from(overlays).forEach((o) => o.close());
-  const { route, param, query } = parseHash();
+  let { route, param, query } = parseHash();
+
+  if (route === 'forgot' || route === 'reset' || route === 'invite') {
+    if (shell.classList.contains('hidden')) return renderAuth();
+    if (route === 'invite' && param) {
+      try {
+        const inv = await api.acceptInvite(param);
+        if (inv.data && inv.data.workspaceId) {
+          api.setWorkspaceId(inv.data.workspaceId);
+          if (inv.data.workspaces) fillWorkspaces(inv.data.workspaces, inv.data.workspaceId);
+        }
+        toast('Invite accepted', 'ok');
+      } catch (err) { toast(err.message || 'Invite failed', 'err'); }
+      window.location.hash = '#/dashboard';
+      return;
+    }
+  }
+
+  const paywalled = requireSubscription && !userSubscribed && !currentUserIsSuperAdmin;
+  if (paywalled && route !== 'billing' && route !== 'admin') {
+    window.location.hash = '#/billing';
+    return;
+  }
+  updateBillingBanner();
+
   $$('.nav-links a').forEach((a) => {
     const on = a.dataset.route === route;
     a.classList.toggle('active', on);
@@ -2859,6 +3088,10 @@ async function navigate() {
     if (main) main.scrollTop = 0;
   } catch (err) {
     if (err.status === 401) return renderAuth();
+    if (err.status === 402) {
+      window.location.hash = '#/billing';
+      return;
+    }
     view.innerHTML = `<div class="card error-card"><h2>Page failed to load</h2><p>${esc(err.message)}</p></div>`;
   }
 }
@@ -2906,6 +3139,14 @@ if (sidebarBackdrop) sidebarBackdrop.addEventListener('click', closeNav);
 window.addEventListener('hashchange', navigate);
 
 (async function init() {
+  const { route } = parseHash();
+  if (route === 'forgot' || route === 'reset') {
+    try {
+      await api.me();
+      // Already signed in — still allow password reset UI if they hit the link.
+    } catch { /* expected when logged out */ }
+    return renderAuth();
+  }
   try {
     const me = await api.me();
     if (me.data.workspaceId) api.setWorkspaceId(me.data.workspaceId);

@@ -78,4 +78,48 @@ async function requireSuperAdmin(req, res, next) {
   }
 }
 
-module.exports = { requireAuth, requireWorkspace, requireRole, requireSuperAdmin };
+/**
+ * Gate product APIs behind an active subscription when platform flag is on.
+ * Super admins always pass. MCP bearer tokens pass if any workspace owner/admin is subscribed.
+ */
+async function requireSubscription(req, res, next) {
+  try {
+    const billing = require('./billing');
+    const required = await billing.requireSubscriptionEnabled();
+    if (!required) return next();
+
+    if (req.auth && req.auth.via === 'token') {
+      const { query } = require('./db');
+      const members = await query(
+        `SELECT u.id, u.is_super_admin, u.subscription_status, u.status, u.deleted_at
+         FROM workspace_members m
+         JOIN users u ON u.id = m.user_id
+         WHERE m.workspace_id = :workspaceId AND m.role IN ('owner','admin')`,
+        { workspaceId: req.auth.workspaceId }
+      );
+      const ok = (members || []).some((u) => billing.isSubscribed(u));
+      if (!ok) {
+        return res.status(402).json({ ok: false, error: 'SUBSCRIPTION_REQUIRED', code: 'SUBSCRIPTION_REQUIRED' });
+      }
+      return next();
+    }
+
+    const userId = (req.auth && req.auth.userId) || (req.session && req.session.userId);
+    if (!userId) return res.status(401).json({ ok: false, error: 'AUTH_REQUIRED' });
+    const user = await billing.getUserBilling(userId);
+    if (!user) return res.status(401).json({ ok: false, error: 'AUTH_REQUIRED' });
+    if (billing.isSubscribed(user)) return next();
+    return res.status(402).json({
+      ok: false,
+      error: 'SUBSCRIPTION_REQUIRED',
+      code: 'SUBSCRIPTION_REQUIRED',
+      subscriptionStatus: user.subscription_status || 'none',
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
+module.exports = {
+  requireAuth, requireWorkspace, requireRole, requireSuperAdmin, requireSubscription,
+};

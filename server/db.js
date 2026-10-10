@@ -207,6 +207,25 @@ async function migrate() {
         reason TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS workspace_invites (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspace_id INTEGER NOT NULL,
+        email TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'member',
+        token_hash TEXT NOT NULL UNIQUE,
+        invited_by INTEGER,
+        accepted_at TEXT,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
     `);
     return;
   }
@@ -278,6 +297,34 @@ async function migrate() {
         UNIQUE KEY uq_refunds_stripe (stripe_refund_id),
         KEY idx_refunds_user (user_id),
         KEY idx_refunds_payment (payment_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id BIGINT UNSIGNED NOT NULL,
+        token_hash CHAR(64) NOT NULL,
+        expires_at DATETIME NOT NULL,
+        used_at DATETIME NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_prt_hash (token_hash),
+        KEY idx_prt_user (user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS workspace_invites (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        workspace_id BIGINT UNSIGNED NOT NULL,
+        email VARCHAR(254) NOT NULL,
+        role ENUM('owner','admin','member') NOT NULL DEFAULT 'member',
+        token_hash CHAR(64) NOT NULL,
+        invited_by BIGINT UNSIGNED NULL,
+        accepted_at DATETIME NULL,
+        expires_at DATETIME NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_invite_hash (token_hash),
+        KEY idx_invite_ws (workspace_id),
+        KEY idx_invite_email (email)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
   });

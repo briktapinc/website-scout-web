@@ -72,6 +72,7 @@ const PLATFORM_SETTING_DEFS = [
   { key: 'stripe.price_id', group: 'billing', label: 'Stripe Price ID (price_…) for monthly plan', default: '' },
   { key: 'billing.amount_label', group: 'billing', label: 'Plan label shown to users', default: 'Monthly subscription' },
   { key: 'billing.require_subscription', group: 'billing', label: 'Require active subscription (1/0)', default: '1' },
+  { key: 'billing.trial_days', group: 'billing', label: 'Trial days on new checkout (0 = none)', default: '0' },
 ];
 
 const WORKSPACE_SEED_KEYS = PLATFORM_SETTING_DEFS

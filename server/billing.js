@@ -70,6 +70,8 @@ async function createCheckoutSession(userId) {
     },
     // Omit payment_method_types — dynamic payment methods from Dashboard
   };
+  const trialDays = Math.max(0, Math.min(365, Number(await platform.getPlatformSetting('billing.trial_days', '0')) || 0));
+  if (trialDays > 0) params.subscription_data.trial_period_days = trialDays;
   let session;
   try {
     session = await stripe.checkout.sessions.create({

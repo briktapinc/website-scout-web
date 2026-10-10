@@ -32,6 +32,14 @@ window.ScoutApi = (() => {
       const err = new Error((data && data.error) || res.statusText || 'Request failed');
       err.status = res.status;
       err.data = data;
+      err.code = data && data.code;
+      if (res.status === 402 || (data && data.code === 'SUBSCRIPTION_REQUIRED')) {
+        try {
+          if (typeof window !== 'undefined' && !String(window.location.hash || '').startsWith('#/billing')) {
+            window.location.hash = '#/billing';
+          }
+        } catch { /* ignore */ }
+      }
       throw err;
     }
     return data;
@@ -66,6 +74,13 @@ window.ScoutApi = (() => {
     register: (body) => post('/auth/register', body),
     logout: () => post('/auth/logout', {}),
     selectWorkspace: (id) => post('/auth/workspace', { workspaceId: id }),
+    forgotPassword: (email) => post('/auth/forgot-password', { email }),
+    resetPassword: (token, password) => post('/auth/reset-password', { token, password }),
+    acceptInvite: (token) => post('/auth/accept-invite', { token }),
+
+    // ---- workspace invites ----
+    invitesList: () => get('/invites'),
+    invitesCreate: (body) => post('/invites', body),
 
     // ---- dashboard / activity / AI ----
     stats: () => get('/dashboard/stats'),

@@ -8,10 +8,12 @@ const {
   listWorkspacesForUser,
 } = require('../workspace');
 const { requireAuth } = require('../middleware');
+const { rateLimit } = require('../rateLimit');
 
 const router = express.Router();
+const authLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 40 });
 
-router.post('/register', async (req, res, next) => {
+router.post('/register', authLimit, async (req, res, next) => {
   try {
     const platform = require('../platform');
     const open = await platform.getPlatformSetting('registration.open', '1');
@@ -22,7 +24,10 @@ router.post('/register', async (req, res, next) => {
     if (maintenance === '1') {
       return res.status(503).json({ ok: false, error: 'MAINTENANCE_MODE' });
     }
-    const { email, password, name, workspaceName } = req.body || {};
+    const { email, password, name, workspaceName, acceptTerms } = req.body || {};
+    if (!acceptTerms) {
+      return res.status(400).json({ ok: false, error: 'You must accept the Terms and Privacy Policy' });
+    }
     if (!email || !password) {
       return res.status(400).json({ ok: false, error: 'email and password are required' });
     }
@@ -36,6 +41,8 @@ router.post('/register', async (req, res, next) => {
     req.session.userId = created.userId;
     req.session.workspaceId = created.workspaceId;
     const workspaces = await listWorkspacesForUser(created.userId);
+    const billing = require('../billing');
+    const requireSub = await billing.requireSubscriptionEnabled();
     res.json({
       ok: true,
       data: {
@@ -44,10 +51,14 @@ router.post('/register', async (req, res, next) => {
           email: String(email).trim().toLowerCase(),
           name: name || '',
           isSuperAdmin: false,
+          subscriptionStatus: 'none',
+          subscribed: false,
         },
         workspaceId: created.workspaceId,
         workspaces,
         isSuperAdmin: false,
+        subscribed: false,
+        requireSubscription: requireSub,
       },
     });
   } catch (e) {
@@ -55,7 +66,7 @@ router.post('/register', async (req, res, next) => {
   }
 });
 
-router.post('/login', async (req, res, next) => {
+router.post('/login', authLimit, async (req, res, next) => {
   try {
     const platform = require('../platform');
     const maintenance = await platform.getPlatformSetting('maintenance_mode', '0');
@@ -76,6 +87,9 @@ router.post('/login', async (req, res, next) => {
     req.session.userId = user.id;
     req.session.workspaceId = workspaces[0] ? workspaces[0].id : null;
     try { await require('../admin').touchLogin(user.id); } catch { /* ignore */ }
+    const billing = require('../billing');
+    const subscribed = billing.isSubscribed(user);
+    const requireSub = await billing.requireSubscriptionEnabled();
     res.json({
       ok: true,
       data: {
@@ -84,14 +98,50 @@ router.post('/login', async (req, res, next) => {
           email: user.email,
           name: user.name,
           isSuperAdmin: isSuper,
+          subscriptionStatus: user.subscription_status || 'none',
+          subscribed,
         },
         workspaceId: req.session.workspaceId,
         workspaces,
         isSuperAdmin: isSuper,
+        subscribed,
+        requireSubscription: requireSub,
       },
     });
   } catch (e) {
     next(e);
+  }
+});
+
+router.post('/forgot-password', authLimit, async (req, res, next) => {
+  try {
+    const email = req.body && req.body.email;
+    const result = await require('../passwordReset').requestReset(email);
+    res.json({ ok: true, data: result });
+  } catch (e) { next(e); }
+});
+
+router.post('/reset-password', authLimit, async (req, res, next) => {
+  try {
+    const { token, password } = req.body || {};
+    if (!token) return res.status(400).json({ ok: false, error: 'token required' });
+    await require('../passwordReset').confirmReset(token, password);
+    res.json({ ok: true, data: { reset: true } });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message, code: e.code });
+  }
+});
+
+router.post('/accept-invite', requireAuth, async (req, res, next) => {
+  try {
+    const token = req.body && req.body.token;
+    if (!token) return res.status(400).json({ ok: false, error: 'token required' });
+    const result = await require('../invites').acceptInvite(token, req.session.userId);
+    req.session.workspaceId = result.workspaceId;
+    const workspaces = await listWorkspacesForUser(req.session.userId);
+    res.json({ ok: true, data: { ...result, workspaces } });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message, code: e.code });
   }
 });
 
@@ -118,6 +168,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
     const isSuperAdmin = Number(user.is_super_admin) === 1;
     const billing = require('../billing');
     const subscribed = billing.isSubscribed(user);
+    const requireSubscription = await billing.requireSubscriptionEnabled();
     const workspaces = await listWorkspacesForUser(user.id);
     res.json({
       ok: true,
@@ -136,6 +187,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
         workspaces,
         isSuperAdmin,
         subscribed,
+        requireSubscription,
       },
     });
   } catch (e) {
