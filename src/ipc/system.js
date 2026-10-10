@@ -13,7 +13,7 @@ const path = require('path');
 
 // Secrets may ONLY be written via settings:setSecret and are never returned
 // in cleartext by settings:getAll (they come back as "***" when set).
-const SECRET_KEYS = ['ai.api_key', 'smtp.pass', 'cf.api_token', 'pexels.api_key', 'mcp.http_token', 'providers.tavily.api_key', 'fal.api_key'];
+const SECRET_KEYS = ['ai.api_key', 'smtp.pass', 'mail.imap.pass', 'cf.api_token', 'pexels.api_key', 'mcp.http_token', 'providers.tavily.api_key', 'fal.api_key'];
 
 // Keys writable via settings:set (secrets and automation_paused excluded).
 const SETTABLE_KEYS = [
@@ -41,6 +41,13 @@ const SETTABLE_KEYS = [
   'smtp.from_email',
   'mail.footer',
   'mail.inbound_drop_dir',
+  'mail.imap.enabled',
+  'mail.imap.host',
+  'mail.imap.port',
+  'mail.imap.secure',
+  'mail.imap.user',
+  'mail.imap.mailbox',
+  'mail.imap.auto_submit',
   'score.threshold_qualified',
   'score.threshold_hot',
   'app.name',
@@ -151,6 +158,27 @@ function validateSetting(key, raw) {
       return { ok: true, value };
     case 'mail.inbound_drop_dir':
       if (value.length > 500) return fail('must be 500 chars or fewer');
+      return { ok: true, value: value.trim() };
+    case 'mail.imap.enabled':
+    case 'mail.imap.secure':
+    case 'mail.imap.auto_submit': {
+      const v = String(value).trim().toLowerCase();
+      if (['1', 'true', 'yes'].includes(v)) return { ok: true, value: '1' };
+      if (['0', 'false', 'no', ''].includes(v)) return { ok: true, value: '0' };
+      return fail('must be boolean-like (0/1)');
+    }
+    case 'mail.imap.host':
+      if (value.length > 255) return fail('must be 255 chars or fewer');
+      if (value && !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value.trim())) return fail('not a valid hostname');
+      return { ok: true, value: value.trim() };
+    case 'mail.imap.port': {
+      const n = toInt(value);
+      if (n === null || n < 1 || n > 65535) return fail('must be an integer port 1-65535');
+      return { ok: true, value: String(n) };
+    }
+    case 'mail.imap.user':
+    case 'mail.imap.mailbox':
+      if (value.length > 255) return fail('must be 255 chars or fewer');
       return { ok: true, value: value.trim() };
     case 'score.threshold_qualified':
     case 'score.threshold_hot': {

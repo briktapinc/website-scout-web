@@ -3,10 +3,13 @@
 /**
  * Inbound email change requests (redesign vs improvements).
  *
- * There is no IMAP mailbox yet. Capture paths:
+ * Capture paths:
  *   1. Paste / import in the Design UI (source: paste)
  *   2. Drop .eml / .txt into the inbound drop folder (source: drop)
- *   3. ingestInboundEmail() — hook for a future IMAP/poller (source: inbound_hook)
+ *   3. IMAP poller (source: imap) via src/imapInbound.js
+ *   4. ingestInboundEmail() hook (source: inbound_hook)
+ *
+ * Outbound subjects include "[Job #N]" so replies match the design job.
  *
  * Pending rows are shown on the design job; Submit routes by request_kind:
  *   redesign     → redesignJob / requestRedesign
@@ -23,7 +26,8 @@ const REDESIGN_SUBJECT_RE = /\b(re\s*[-:]?\s*)?(design\s*)?(redesign|revise|revi
 const REDESIGN_BODY_RE = /\b(redesign|please\s+revise|please\s+change|can\s+you\s+(change|update|fix)|needs?\s+(a\s+)?(redesign|revision)|===?\s*REDESIGN\s+REQUEST\s*===?)\b/i;
 const IMPROVEMENTS_SUBJECT_RE = /\b(improvements?|polish|tweaks?|small\s+fixes?|copy\s+tweaks?|cta\s+(fix|tweak)|mobile\s+(fix|sizing)|imagery)\b/i;
 const IMPROVEMENTS_BODY_RE = /\b(improvements?|polish|small\s+(fix|tweak|change)|copy\s+tweak|cta|mobile\s+sizing|===?\s*IMPROVEMENTS?\s+REQUEST\s*===?)\b/i;
-const JOB_ID_RE = /\b(?:design\s*job|project|job|website)\s*#?\s*(\d+)\b/i;
+// Match [Job #12], Job #12, project #12, Questions about project #12:, etc.
+const JOB_ID_RE = /\[Job\s*#\s*(\d+)\]|\b(?:design\s*job|project|job|website)\s*#\s*(\d+)\b/i;
 
 function fail(code, message) {
   const e = new Error(message);
@@ -140,8 +144,13 @@ function extractJobId(subject, body) {
   const hay = `${subject || ''}\n${body || ''}`;
   const m = hay.match(JOB_ID_RE);
   if (!m) return null;
-  const id = Number(m[1]);
+  const id = Number(m[1] || m[2]);
   return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+/** Canonical subject token clients should keep when replying. */
+function jobSubjectTag(jobId) {
+  return `[Job #${Number(jobId)}]`;
 }
 
 function publicRow(row) {
@@ -478,6 +487,7 @@ module.exports = {
   looksLikeRedesignRequest,
   detectRequestKind,
   extractJobId,
+  jobSubjectTag,
   ingestInboundEmail,
   listEmailRedesigns,
   getEmailRedesign,

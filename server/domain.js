@@ -417,6 +417,16 @@ function emailRedesignScan(workspaceId) {
   });
 }
 
+async function imapPoll(workspaceId, opts = {}) {
+  return withDb(workspaceId, async (db) => {
+    if (getSetting(db, 'automation_paused', '0') === '1' && !opts.force) {
+      return { skipped: true, reason: 'automation_paused' };
+    }
+    const imap = require('../src/imapInbound');
+    return imap.pollMailbox(db, opts);
+  });
+}
+
 // ---------- Design learning ----------
 const designLearning = () => require('../src/designLearning');
 
@@ -1021,6 +1031,7 @@ module.exports = {
   designDefaultInstructions, designListAnswers, designSetContact, designEmailQuestions, designEmailDelivery,
   designRecordReply, designSaveWebsite, designRemoveDelivery, designAssetBase, designRenderHtml, designOpenPreview,
   emailRedesignList, emailRedesignGet, emailRedesignIngest, emailRedesignSubmit, emailRedesignDismiss, emailRedesignScan,
+  imapPoll,
   learningStatus, learningPlaybook, learningEvents, learningClear, learningDistill,
   sitesList, sitesGet, sitesGenerate, sitesQa, sitesExport, sitesAddImages, sitesVersions, sitesRestore,
   sitesSave, sitesForLead, sitesRenderHtml, sitesPreview, sitesApplyInstruction, validatePages,
@@ -1031,6 +1042,6 @@ module.exports = {
   settingsGetAll, settingsSet, settingsSetSecret, automationSet, promptsList, promptsSave, promptsReset, activityRecent,
   aiUsage, aiStatus,
   cfGetConfig, cfSaveConfig, cfTest, cfPublish,
-  runDiscoveryJobTick, runOutreachJobTick,
+  runDiscoveryJobTick, runOutreachJobTick, runImapPollTick: imapPoll,
   getSetting, setSetting,
 };

@@ -150,6 +150,7 @@ window.ScoutApi = (() => {
     emailRedesignSubmit: (id, body) => post('/design/email-redesign/' + id + '/submit', body),
     emailRedesignDismiss: (id) => post('/design/email-redesign/' + id + '/dismiss', {}),
     emailRedesignScan: () => post('/design/email-redesign/scan', {}),
+    emailImapPoll: (body) => post('/design/email-redesign/imap-poll', body || {}),
 
     // ---- design: learning playbook ----
     learningStatus: () => get('/design/learning/status'),

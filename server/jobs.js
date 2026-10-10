@@ -3,7 +3,7 @@
 const { query, withConnection } = require('./db');
 const { getSetting, logActivity } = require('./workspace');
 
-const JOB_TYPES = ['discovery', 'outreach_process', 'design_poll_notify', 'custom'];
+const JOB_TYPES = ['discovery', 'outreach_process', 'design_poll_notify', 'imap_poll', 'custom'];
 
 function addMinutes(date, minutes) {
   return new Date(date.getTime() + minutes * 60000);
@@ -148,6 +148,10 @@ async function runJobLogic(workspaceId, job) {
   if (job.type === 'design_poll_notify') {
     const pending = domain.designPending(workspaceId);
     return { ok: true, ...pending };
+  }
+
+  if (job.type === 'imap_poll') {
+    return domain.imapPoll(workspaceId, payload || {});
   }
 
   if (job.type === 'custom') {

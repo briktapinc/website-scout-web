@@ -763,11 +763,12 @@ function composeQuestionEmail(db, row, pending) {
   const lead = row.lead_id ? db.prepare('SELECT business_name, email FROM leads WHERE id = ?').get(row.lead_id) : null;
   const business = (lead && lead.business_name) || row.title;
   const to = String(row.contact_email || (lead && lead.email) || '').trim().toLowerCase();
-  const subject = `Questions about project #${row.id}: ${row.title}`.slice(0, 200);
+  const tag = `[Job #${row.id}]`;
+  const subject = `${tag} Questions: ${row.title}`.slice(0, 200);
   const lines = pending.map((q, i) => `${i + 1}. ${q.question}`).join('\n');
   const footer = settingValue(db, 'mail.footer');
   const body = [
-    `Project #${row.id} — ${row.title}`,
+    `${tag} — ${row.title}`,
     `Business: ${business}`,
     `Kind of work: ${row.type}`,
     '',
@@ -775,7 +776,7 @@ function composeQuestionEmail(db, row, pending) {
     '',
     lines,
     '',
-    'Reply with your answers. Paste that reply into the design job in the app if inbound email is not connected.',
+    'Please reply to this email and keep the subject line so we can match your answers to this project.',
     footer ? `\n${footer}` : '',
   ].join('\n');
   return { to, subject, body, business };
@@ -927,9 +928,10 @@ function formatDeliveryEmailBody(db, row, payload) {
     || row.title;
   const footer = settingValue(db, 'mail.footer');
   const sections = [];
-  sections.push(`Project #${row.id} — ${row.title}`);
+  sections.push(`[Job #${row.id}] — ${row.title}`);
   sections.push(`Kind: ${row.type}`);
   sections.push(`For: ${business}`);
+  sections.push('Reply to this email (keep the subject) if you want changes or improvements.');
   if (payload && payload.market) sections.push(`Market: ${payload.market}`);
   if (payload && payload.contact && typeof payload.contact === 'object') {
     const c = payload.contact;
@@ -1027,7 +1029,8 @@ function composeDeliveryEmail(db, row, payload) {
     : null;
   const to = String(row.contact_email || (lead && lead.email) || '').trim().toLowerCase();
   const kindLabel = String(row.type || 'delivery').replace(/[-_]/g, ' ');
-  const subject = `${kindLabel} for you — project #${row.id}: ${row.title}`.slice(0, 200);
+  const tag = `[Job #${row.id}]`;
+  const subject = `${tag} ${kindLabel} ready: ${row.title}`.slice(0, 200);
   const body = formatDeliveryEmailBody(db, row, payload);
   return { to, subject, body };
 }

@@ -1428,8 +1428,11 @@ async function pageDesign(param) {
     <div class="pagination" id="dj-pager"></div>
     <div class="card">
       <div class="panel-h"><h3>Email change requests</h3>
-        <button class="btn small" data-act="scan">Scan drop folder</button></div>
-      <p class="hint">Client replies asking for a redesign or improvements. ${er && er.data.dropDir ? `Drop folder: <span class="mono">${esc(er.data.dropDir)}</span>` : ''}</p>
+        <div class="inline">
+          <button class="btn small" data-act="imap">Poll IMAP inbox</button>
+          <button class="btn small" data-act="scan">Scan drop folder</button>
+        </div></div>
+      <p class="hint">Client replies with <code>[Job #N]</code> in the subject are matched automatically when IMAP is enabled (Settings → Email). ${er && er.data.dropDir ? `Drop folder: <span class="mono">${esc(er.data.dropDir)}</span>` : ''}</p>
       <div id="dj-er">${ers.map((r) => erRowHtml(r, true)).join('') || '<p class="hint">No pending email requests.</p>'}</div>
     </div>
     <div class="card"><details><summary>Design learning</summary><div id="dj-learning" style="margin-top:8px"></div></details></div>`;
@@ -1450,6 +1453,14 @@ async function pageDesign(param) {
     scan: async () => {
       const r = (await api.emailRedesignScan()).data;
       toast(`Scanned ${r.scanned || 0} file(s).`, 'ok');
+      pageDesign();
+    },
+    imap: async () => {
+      const r = (await api.emailImapPoll({ force: true })).data;
+      if (r.skipped) toast(r.reason === 'imap_not_configured' || r.reason === 'imap_disabled'
+        ? 'Enable IMAP under Settings → Email first.'
+        : (r.reason || 'IMAP skipped'), 'err');
+      else toast(`IMAP: fetched ${r.fetched || 0}, processed ${r.processed || 0}.`, 'ok');
       pageDesign();
     },
     'er-submit': async (t) => {
@@ -2068,9 +2079,9 @@ async function pageJobs() {
   const jobs = asList(d, ['jobs', 'rows']);
   const types = (Array.isArray(d.types) && d.types.length)
     ? d.types
-    : ['discovery', 'outreach_process', 'research', 'custom'];
+    : ['discovery', 'outreach_process', 'imap_poll', 'design_poll_notify', 'custom'];
   view.innerHTML = `
-    <div class="page-head"><div><h1>Jobs</h1><p class="lede">Schedule discovery, outreach processing and custom work — also available via MCP <code>jobs.*</code>. Jobs honor the automation kill switch.</p></div></div>
+    <div class="page-head"><div><h1>Jobs</h1><p class="lede">Schedule discovery, outreach processing, IMAP inbox poll and custom work — also available via MCP <code>jobs.*</code>. Jobs honor the automation kill switch.</p></div></div>
     <div class="card"><h3>Create job</h3>
       <form id="job-form">
         <div class="row">
@@ -2404,13 +2415,18 @@ async function pageSettings() {
           <p class="hint" id="ds-status" style="margin-top:10px">${esc(sched.enabled ? 'Enabled' : 'Disabled')} · next: ${esc(sched.next_run || '—')} · last: ${esc(sched.last_run || '—')} ${esc(sched.last_status || '')} ${esc(sched.last_error || '')}</p>
         </section>
 
-        <section class="card" id="sec-smtp"><h2>SMTP / outreach email</h2>
-          <p class="hint">Use a real provider for deliverability. Outbound only; client replies are pasted on a Design job or dropped as .eml/.txt files into the inbound folder below.</p>
-          ${f('mail.inbound_drop_dir', 'Inbound email drop folder (optional)', { placeholder: '(default: workspace data / inbound-email)' })}
+        <section class="card" id="sec-smtp"><h2>Email (SMTP + IMAP)</h2>
+          <p class="hint">SMTP sends design/outreach mail. IMAP polls the same inbox for client replies. Outbound subjects include <code>[Job #N]</code> so replies are matched automatically, answers are recorded, and change requests are queued for the agent.</p>
+          <h3 style="margin:12px 0 8px;font-size:15px">SMTP (outbound)</h3>
           <div class="row">${f('smtp.host', 'Host', { placeholder: 'mail.example.com' })}${f('smtp.port', 'Port', { type: 'number', min: 1 })}${f('smtp.secure', 'Use TLS (port 465)', { options: [['0', 'No (STARTTLS / plain)'], ['1', 'Yes']] })}</div>
           <div class="row">${f('smtp.user', 'Username')}${secret('smtp.pass', 'Password')}</div>
           <div class="row">${f('smtp.from_name', 'From name')}${f('smtp.from_email', 'From email')}</div>
-          ${save('sec-smtp', 'Save SMTP settings')}
+          <h3 style="margin:18px 0 8px;font-size:15px">IMAP (inbound replies)</h3>
+          <div class="row">${f('mail.imap.enabled', 'IMAP polling', { options: onOff })}${f('mail.imap.auto_submit', 'Auto-queue change requests', { options: onOff, hint: 'When on, redesign/improve replies are submitted to waiting_on_agent.' })}</div>
+          <div class="row">${f('mail.imap.host', 'IMAP host', { placeholder: '(defaults to SMTP host)' })}${f('mail.imap.port', 'Port', { type: 'number', min: 1, def: '993' })}${f('mail.imap.secure', 'TLS', { options: [['1', 'Yes (993)'], ['0', 'No']] })}</div>
+          <div class="row">${f('mail.imap.user', 'IMAP username', { placeholder: '(defaults to SMTP user)' })}${secret('mail.imap.pass', 'IMAP password', 'Leave blank to reuse the SMTP password.')}</div>
+          <div class="row">${f('mail.imap.mailbox', 'Mailbox', { def: 'INBOX' })}${f('mail.inbound_drop_dir', 'Drop folder (optional)', { placeholder: '(default: workspace data / inbound-email)' })}</div>
+          <div class="inline">${save('sec-smtp', 'Save email settings')}<button class="btn" type="button" data-act="imap-test">Poll inbox now</button><span class="msg" data-msg="imap-test"></span></div>
         </section>
 
         <section class="card" id="sec-cf"><h2>Cloudflare Pages</h2>
@@ -2526,6 +2542,15 @@ async function pageSettings() {
       const r = (await api.cfTest()).data;
       if (r.ok === false) out.innerHTML = `<span class="error">${esc(r.error)}</span>${r.hint || r.detail ? ' — ' + esc(r.hint || r.detail) : ''}`;
       else out.innerHTML = `<span class="check-pass">Connected.</span> Projects: ${esc((r.projects || []).join(', ') || 'none')}`;
+    },
+    'imap-test': async () => {
+      const msg = $('[data-msg="imap-test"]');
+      setMsg(msg, 'Polling…');
+      try {
+        const r = (await api.emailImapPoll({ force: true })).data;
+        if (r.skipped) setMsg(msg, r.reason || 'skipped', 'err');
+        else setMsg(msg, `Fetched ${r.fetched || 0}, processed ${r.processed || 0}`, 'ok');
+      } catch (err) { setMsg(msg, err.message, 'err'); }
     },
     'disc-save': async () => {
       const msg = $('#ds-msg');

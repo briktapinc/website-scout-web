@@ -203,6 +203,13 @@ async function main() {
   }
 
   startScheduler({ intervalMs: Number(process.env.JOB_TICK_MS || 30000) });
+  try {
+    require('./server/imapPoller').startImapPoller({
+      intervalMs: Number(process.env.IMAP_POLL_MS || 120000),
+    });
+  } catch (e) {
+    console.warn('[imapPoller] not started:', e.message);
+  }
   app.listen(PORT, () => {
     console.log(`[website-scout-web] listening on :${PORT}`);
   });

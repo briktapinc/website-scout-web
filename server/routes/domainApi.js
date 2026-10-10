@@ -84,6 +84,10 @@ router.get(erPaths(), (req, res) => {
 });
 router.post(erPaths('/ingest'), (req, res) => { try { ok(res, domain.emailRedesignIngest(req.auth.workspaceId, req.body || {})); } catch (e) { fail(res, e); } });
 router.post(erPaths('/scan'), (req, res) => { try { ok(res, domain.emailRedesignScan(req.auth.workspaceId)); } catch (e) { fail(res, e); } });
+router.post(erPaths('/imap-poll'), async (req, res) => {
+  try { ok(res, await domain.imapPoll(req.auth.workspaceId, { force: true, ...(req.body || {}) })); }
+  catch (e) { fail(res, e, 500); }
+});
 router.get(erPaths('/:id'), (req, res) => { try { ok(res, domain.emailRedesignGet(req.auth.workspaceId, Number(req.params.id))); } catch (e) { fail(res, e); } });
 router.post(erPaths('/:id/submit'), async (req, res) => { try { ok(res, await domain.emailRedesignSubmit(req.auth.workspaceId, Number(req.params.id), req.body || {})); } catch (e) { fail(res, e, 500); } });
 router.post(erPaths('/:id/dismiss'), (req, res) => { try { ok(res, domain.emailRedesignDismiss(req.auth.workspaceId, Number(req.params.id))); } catch (e) { fail(res, e); } });
