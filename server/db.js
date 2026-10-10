@@ -80,6 +80,12 @@ async function query(sql, params) {
         'ON CONFLICT(workspace_id, key) DO UPDATE SET value = excluded.value'
       );
     }
+    if (/ON CONFLICT DO UPDATE SET/i.test(s) && /platform_settings/i.test(s)) {
+      s = s.replace(
+        /ON CONFLICT DO UPDATE SET value = VALUES\(value\)/i,
+        'ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+      );
+    }
     if (/ON CONFLICT DO UPDATE SET/i.test(s) && /sessions/i.test(s)) {
       s = s.replace(
         /ON CONFLICT DO UPDATE SET expires = VALUES\(expires\), data = VALUES\(data\)/i,
@@ -132,11 +138,47 @@ async function withConnection(fn) {
   }
 }
 
+async function ensureColumnMysql(conn, table, column, definition) {
+  const [rows] = await conn.query(
+    `SELECT COUNT(*) AS c FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [table, column]
+  );
+  if (Number(rows[0].c) === 0) {
+    await conn.query(`ALTER TABLE \`${table}\` ADD COLUMN ${definition}`);
+  }
+}
+
+async function ensureColumnSqlite(db, table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+  }
+}
+
 async function migrate() {
   if (DRIVER === 'sqlite') {
     const schemaPath = path.join(__dirname, '..', 'sql', 'schema.sqlite.sql');
     const sql = fs.readFileSync(schemaPath, 'utf8');
-    getSqlite().exec(sql);
+    const db = getSqlite();
+    db.exec(sql);
+    try { ensureColumnSqlite(db, 'users', 'is_super_admin', 'INTEGER NOT NULL DEFAULT 0'); } catch { /* */ }
+    try { ensureColumnSqlite(db, 'users', 'status', "TEXT NOT NULL DEFAULT 'active'"); } catch { /* */ }
+    try { ensureColumnSqlite(db, 'users', 'last_login_at', 'TEXT'); } catch { /* */ }
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS platform_settings (
+        key TEXT NOT NULL PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS platform_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        actor_user_id INTEGER,
+        action TEXT NOT NULL,
+        detail TEXT,
+        at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
     return;
   }
 
@@ -150,6 +192,26 @@ async function migrate() {
     for (const stmt of statements) {
       await conn.query(stmt);
     }
+    await ensureColumnMysql(conn, 'users', 'is_super_admin', 'TINYINT(1) NOT NULL DEFAULT 0');
+    await ensureColumnMysql(conn, 'users', 'status', "VARCHAR(20) NOT NULL DEFAULT 'active'");
+    await ensureColumnMysql(conn, 'users', 'last_login_at', 'DATETIME NULL');
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS platform_settings (
+        \`key\` VARCHAR(120) NOT NULL PRIMARY KEY,
+        value MEDIUMTEXT NOT NULL,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS platform_audit (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        actor_user_id BIGINT UNSIGNED NULL,
+        action VARCHAR(80) NOT NULL,
+        detail TEXT NULL,
+        at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_platform_audit_at (at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
   });
 }
 

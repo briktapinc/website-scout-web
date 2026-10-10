@@ -67,11 +67,21 @@ function openWorkspaceDb(workspaceId) {
   } catch { /* optional */ }
 
   if (firstRun) {
-    const { runSeed } = require('../src/seed');
     // Seed settings/prompts only — skip demo leads for multi-tenant workspaces.
     const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
     const { SETTING_SEEDS, PROMPT_SEEDS } = require('../src/seed');
     for (const [key, value] of SETTING_SEEDS) insertSetting.run(key, value);
+    try {
+      const platform = require('./platform');
+      platform.workspaceSeedFromPlatform().then((seed) => {
+        const upsert = db.prepare(
+          'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+        );
+        for (const [key, value] of Object.entries(seed)) {
+          if (value != null && String(value).trim() !== '') upsert.run(key, value);
+        }
+      }).catch(() => {});
+    } catch { /* optional */ }
     const insertPrompt = db.prepare('INSERT OR IGNORE INTO prompts (key, name, body) VALUES (?, ?, ?)');
     for (const p of PROMPT_SEEDS) insertPrompt.run(p.key, p.name, p.body);
   }

@@ -204,5 +204,24 @@ window.ScoutApi = (() => {
     mcpToken: (name) => post('/mcp/token', { name: name || 'MCP' }),
     mcpRevoke: (id) => del('/mcp/token/' + encodeURIComponent(id)),
     mcpDeleteToken: (id) => del('/mcp/token/' + encodeURIComponent(id)),
+
+    // ---- Platform super admin ----
+    adminOverview: () => get('/admin/overview'),
+    adminAudit: (q) => get('/admin/audit', q),
+    adminUsers: (q) => get('/admin/users', q),
+    adminUser: (id) => get('/admin/users/' + id),
+    adminCreateUser: (body) => post('/admin/users', body),
+    adminUpdateUser: (id, body) => patch('/admin/users/' + id, body),
+    adminWorkspaces: (q) => get('/admin/workspaces', q),
+    adminWorkspace: (id) => get('/admin/workspaces/' + id),
+    adminCreateWorkspace: (body) => post('/admin/workspaces', body),
+    adminUpdateWorkspace: (id, body) => patch('/admin/workspaces/' + id, body),
+    adminDeleteWorkspace: (id) => del('/admin/workspaces/' + id),
+    adminAddMember: (wsId, userId, role) => post('/admin/workspaces/' + wsId + '/members', { userId, role }),
+    adminRemoveMember: (wsId, userId) => del('/admin/workspaces/' + wsId + '/members/' + userId),
+    adminSettings: () => get('/admin/settings'),
+    adminSettingsSave: (settings) => put('/admin/settings', { settings }),
+    adminSettingsSecret: (key, value) => put('/admin/settings/secret', { key, value }),
+    adminPushDefaults: (body) => post('/admin/settings/push', body || {}),
   };
 })();

@@ -15,7 +15,15 @@ function slugify(name) {
 }
 
 async function seedWorkspaceDefaults(conn, workspaceId) {
-  for (const [key, value] of SETTING_SEEDS) {
+  // Start from product seeds, then overlay platform defaults (super-admin).
+  const merged = new Map(SETTING_SEEDS);
+  try {
+    const platform = require('./platform');
+    const fromPlatform = await platform.workspaceSeedFromPlatform();
+    for (const [k, v] of Object.entries(fromPlatform)) merged.set(k, v);
+  } catch { /* platform optional during early migrate */ }
+
+  for (const [key, value] of merged) {
     await conn.execute(
       'INSERT IGNORE INTO workspace_settings (workspace_id, `key`, value) VALUES (?, ?, ?)',
       [workspaceId, key, value]
@@ -65,7 +73,8 @@ async function createUserWithWorkspace({ email, password, name, workspaceName })
 
 async function findUserByEmail(email) {
   const rows = await query(
-    'SELECT id, email, password_hash, name, created_at FROM users WHERE email = :email LIMIT 1',
+    `SELECT id, email, password_hash, name, is_super_admin, status, last_login_at, created_at
+     FROM users WHERE email = :email LIMIT 1`,
     { email: String(email || '').trim().toLowerCase() }
   );
   return rows[0] || null;
@@ -164,4 +173,5 @@ module.exports = {
   findWorkspaceByToken,
   seedWorkspaceDefaults,
   hashToken,
+  slugify,
 };

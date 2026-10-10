@@ -20,6 +20,7 @@ const authRoutes = require('./server/routes/auth');
 const domainApi = require('./server/routes/domainApi');
 const jobsRoutes = require('./server/routes/jobs');
 const mcpAdminRoutes = require('./server/routes/mcpAdmin');
+const adminRoutes = require('./server/routes/admin');
 
 const PORT = Number(process.env.PORT || 3000);
 const app = express();
@@ -75,6 +76,7 @@ app.get('/health', async (_req, res) => {
 });
 
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1', domainApi);
 app.use('/api/v1/jobs', jobsRoutes);
 app.use('/api/v1/mcp', mcpAdminRoutes);
@@ -139,8 +141,13 @@ async function main() {
   await migrate();
   console.log('[db] schema ready');
 
+  const platform = require('./server/platform');
+  await platform.seedPlatformDefaults();
+  console.log('[platform] settings seeded');
+
   if (process.env.BOOTSTRAP_EMAIL && process.env.BOOTSTRAP_PASSWORD) {
     const { findUserByEmail, createUserWithWorkspace } = require('./server/workspace');
+    const admin = require('./server/admin');
     const existing = await findUserByEmail(process.env.BOOTSTRAP_EMAIL);
     if (!existing) {
       const created = await createUserWithWorkspace({
@@ -150,6 +157,16 @@ async function main() {
         workspaceName: process.env.BOOTSTRAP_WORKSPACE || 'Primary',
       });
       console.log('[bootstrap] created owner user + workspace', created.workspaceId);
+      await admin.setSuperAdmin(created.userId, true);
+      console.log('[bootstrap] promoted bootstrap user to super admin');
+    } else if (
+      process.env.BOOTSTRAP_SUPER_ADMIN === '1' ||
+      process.env.BOOTSTRAP_SUPER_ADMIN === 'true' ||
+      !process.env.BOOTSTRAP_SUPER_ADMIN
+    ) {
+      // Default: ensure bootstrap email is a super admin (safe for single-tenant ops).
+      await admin.setSuperAdmin(existing.id, true);
+      console.log('[bootstrap] ensured super admin for', process.env.BOOTSTRAP_EMAIL);
     }
   }
 

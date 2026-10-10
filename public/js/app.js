@@ -12,11 +12,12 @@ const autoEl = document.getElementById('shell-automation');
 const topTitle = document.getElementById('top-title');
 const toastHost = document.getElementById('toast-host');
 
-const ROUTES = ['dashboard', 'leads', 'websites', 'design', 'outreach', 'pipeline', 'jobs', 'mcp', 'settings'];
+const ROUTES = ['dashboard', 'leads', 'websites', 'design', 'outreach', 'pipeline', 'jobs', 'mcp', 'settings', 'admin'];
 const ROUTE_LABELS = {
   dashboard: 'Dashboard', leads: 'Leads', websites: 'Websites', design: 'Design', outreach: 'Outreach',
-  pipeline: 'Pipeline', jobs: 'Jobs', mcp: 'MCP', settings: 'Settings',
+  pipeline: 'Pipeline', jobs: 'Jobs', mcp: 'MCP', settings: 'Settings', admin: 'Admin',
 };
+let currentUserIsSuperAdmin = false;
 const LEAD_STATUSES = ['new', 'researching', 'qualified', 'building', 'qa_pending', 'ready', 'outreach_pending',
   'contacted', 'engaged', 'claimed', 'trial', 'customer', 'lost'];
 const DESIGN_STATUSES = ['draft', 'waiting_on_agent', 'questions_pending', 'in_progress', 'delivered'];
@@ -409,6 +410,9 @@ async function setAutomation(paused) {
 async function bootApp(meData) {
   authGate.classList.add('hidden');
   shell.classList.remove('hidden');
+  currentUserIsSuperAdmin = !!(meData.isSuperAdmin || (meData.user && meData.user.isSuperAdmin));
+  const navAdmin = document.getElementById('nav-admin');
+  if (navAdmin) navAdmin.classList.toggle('hidden', !currentUserIsSuperAdmin);
   fillWorkspaces(meData.workspaces, meData.workspaceId || api.getWorkspaceId());
   await refreshAutomation();
   navigate();
@@ -2359,9 +2363,325 @@ function parseHash() {
   return { route: m[1], param: m[2] || '', query };
 }
 
+/* ------------------------------------------------------------------ */
+/* Platform super admin                                                */
+/* ------------------------------------------------------------------ */
+
+let adminTab = 'overview';
+
+async function pageAdmin(param) {
+  if (!currentUserIsSuperAdmin) {
+    view.innerHTML = '<div class="card error-card"><h2>Super admin only</h2><p>Your account is not a platform administrator.</p></div>';
+    return;
+  }
+  const tab = (param && String(param).split('/')[0]) || adminTab || 'overview';
+  adminTab = tab;
+  const tabs = [
+    ['overview', 'Overview'],
+    ['users', 'Users'],
+    ['workspaces', 'Workspaces'],
+    ['email', 'Email'],
+    ['sms', 'SMS'],
+    ['keys', 'API keys'],
+    ['general', 'General'],
+    ['audit', 'Audit'],
+  ];
+
+  view.innerHTML = `
+    <div class="page-head">
+      <div><h1>Platform admin</h1><p class="lede">Manage users, workspaces, and platform-wide defaults.</p></div>
+    </div>
+    <div class="tabs" id="admin-tabs">${tabs.map(([k, l]) =>
+      `<button type="button" class="${k === tab ? 'active' : ''}" data-tab="${k}">${l}</button>`).join('')}</div>
+    <div id="admin-body"><p class="hint">Loading…</p></div>`;
+
+  $('#admin-tabs').onclick = (e) => {
+    const b = e.target.closest('[data-tab]');
+    if (!b) return;
+    window.location.hash = '#/admin/' + b.dataset.tab;
+  };
+
+  const body = $('#admin-body');
+  try {
+    if (tab === 'overview') await renderAdminOverview(body);
+    else if (tab === 'users') await renderAdminUsers(body);
+    else if (tab === 'workspaces') await renderAdminWorkspaces(body);
+    else if (tab === 'email' || tab === 'sms' || tab === 'keys' || tab === 'general') await renderAdminSettings(body, tab);
+    else if (tab === 'audit') await renderAdminAudit(body);
+    else body.innerHTML = '<p class="hint">Unknown tab</p>';
+  } catch (err) {
+    body.innerHTML = `<div class="card error-card"><p>${esc(err.message)}</p></div>`;
+  }
+}
+
+async function renderAdminOverview(el) {
+  const ov = (await api.adminOverview()).data;
+  el.innerHTML = `
+    <div class="stats-cards">
+      <div class="stat-card"><div class="n">${ov.users}</div><div class="l">Users</div></div>
+      <div class="stat-card"><div class="n">${ov.usersActive}</div><div class="l">Active</div></div>
+      <div class="stat-card"><div class="n">${ov.workspaces}</div><div class="l">Workspaces</div></div>
+      <div class="stat-card"><div class="n">${ov.superAdmins}</div><div class="l">Super admins</div></div>
+      <div class="stat-card"><div class="n">${ov.mcpTokens}</div><div class="l">MCP tokens</div></div>
+      <div class="stat-card"><div class="n">${ov.scheduledJobs}</div><div class="l">Scheduled jobs</div></div>
+    </div>
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-b">
+        <p>Registration: <strong>${ov.registrationOpen ? 'open' : 'closed'}</strong> ·
+           Maintenance: <strong>${ov.maintenanceMode ? 'on' : 'off'}</strong></p>
+        <div class="row actions" style="margin-top:0.75rem">
+          <button class="btn" type="button" id="admin-push">Push defaults to all workspaces (fill empty)</button>
+          <button class="btn ghost" type="button" id="admin-push-force">Force overwrite defaults</button>
+        </div>
+        <div class="msg" id="admin-ov-msg"></div>
+      </div>
+    </div>`;
+  $('#admin-push').onclick = () => safeRun($('#admin-ov-msg'), async () => {
+    const r = await api.adminPushDefaults({ force: false });
+    $('#admin-ov-msg').textContent = `Updated ${r.data.cellsUpdated} setting cells across ${r.data.workspaces} workspaces.`;
+    $('#admin-ov-msg').className = 'msg ok';
+  });
+  $('#admin-push-force').onclick = () => {
+    if (!confirm('Overwrite workspace settings with platform defaults?')) return;
+    safeRun($('#admin-ov-msg'), async () => {
+      const r = await api.adminPushDefaults({ force: true });
+      $('#admin-ov-msg').textContent = `Force-updated ${r.data.cellsUpdated} cells across ${r.data.workspaces} workspaces.`;
+      $('#admin-ov-msg').className = 'msg ok';
+    });
+  };
+}
+
+async function renderAdminUsers(el) {
+  const users = asList((await api.adminUsers()).data, ['users']);
+  el.innerHTML = `
+    <div class="panel">
+      <div class="panel-h"><h3>Create user</h3></div>
+      <div class="panel-b">
+        <form id="admin-user-form" class="stack">
+          <div class="row">
+            <div><label>Email</label><input name="email" type="email" required /></div>
+            <div><label>Name</label><input name="name" /></div>
+            <div><label>Password</label><input name="password" type="password" minlength="8" required /></div>
+          </div>
+          <div class="row">
+            <div><label>Workspace name</label><input name="workspaceName" placeholder="Optional" /></div>
+            <div><label><input name="superAdmin" type="checkbox" /> Super admin</label></div>
+          </div>
+          <div class="row actions"><button class="btn" type="submit">Create</button></div>
+          <div class="msg" id="admin-user-msg"></div>
+        </form>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-h"><h3>Users</h3></div>
+      <div class="panel-b">
+        <table><thead><tr><th>Email</th><th>Name</th><th>Status</th><th>WS</th><th>Role</th><th></th></tr></thead>
+        <tbody>
+          ${users.map((u) => `<tr>
+            <td>${esc(u.email)}</td><td>${esc(u.name)}</td>
+            <td>${esc(u.status || 'active')}</td><td>${esc(u.workspace_count)}</td>
+            <td>${Number(u.is_super_admin) ? 'super' : 'user'}</td>
+            <td class="row actions">
+              <button class="btn ghost small" data-toggle-sa="${u.id}" data-on="${Number(u.is_super_admin) ? 0 : 1}">${Number(u.is_super_admin) ? 'Demote' : 'Make super'}</button>
+              <button class="btn ghost small" data-toggle-st="${u.id}" data-st="${(u.status || 'active') === 'disabled' ? 'active' : 'disabled'}">${(u.status || 'active') === 'disabled' ? 'Enable' : 'Disable'}</button>
+              <button class="btn ghost small" data-reset="${u.id}">Reset pw</button>
+            </td>
+          </tr>`).join('') || '<tr><td colspan="6">No users</td></tr>'}
+        </tbody></table>
+      </div>
+    </div>`;
+
+  $('#admin-user-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const body = Object.fromEntries(fd.entries());
+    body.superAdmin = !!fd.get('superAdmin');
+    const msg = $('#admin-user-msg');
+    try {
+      await api.adminCreateUser(body);
+      msg.textContent = 'Created';
+      msg.className = 'msg ok';
+      pageAdmin('users');
+    } catch (err) {
+      msg.textContent = err.message;
+      msg.className = 'msg error';
+    }
+  };
+  $$('[data-toggle-sa]').forEach((b) => b.onclick = async () => {
+    await api.adminUpdateUser(b.dataset.toggleSa, { is_super_admin: Number(b.dataset.on) === 1 });
+    pageAdmin('users');
+  });
+  $$('[data-toggle-st]').forEach((b) => b.onclick = async () => {
+    await api.adminUpdateUser(b.dataset.toggleSt, { status: b.dataset.st });
+    pageAdmin('users');
+  });
+  $$('[data-reset]').forEach((b) => b.onclick = async () => {
+    const password = prompt('New password (min 8 chars)');
+    if (!password) return;
+    try {
+      await api.adminUpdateUser(b.dataset.reset, { password });
+      toast('Password updated', 'ok');
+    } catch (err) { toast(err.message, 'err'); }
+  });
+}
+
+async function renderAdminWorkspaces(el) {
+  const workspaces = asList((await api.adminWorkspaces()).data, ['workspaces']);
+  const users = asList((await api.adminUsers({ limit: 200 })).data, ['users']);
+  el.innerHTML = `
+    <div class="panel">
+      <div class="panel-h"><h3>Create workspace</h3></div>
+      <div class="panel-b">
+        <form id="admin-ws-form" class="row actions">
+          <input name="name" placeholder="Workspace name" required style="min-width:200px" />
+          <select name="ownerUserId"><option value="">No owner</option>
+            ${users.map((u) => `<option value="${u.id}">${esc(u.email)}</option>`).join('')}
+          </select>
+          <button class="btn" type="submit">Create</button>
+        </form>
+        <div class="msg" id="admin-ws-msg"></div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-h"><h3>Workspaces</h3></div>
+      <div class="panel-b">
+        <table><thead><tr><th>Name</th><th>Slug</th><th>Members</th><th>Tokens</th><th></th></tr></thead>
+        <tbody>
+          ${workspaces.map((w) => `<tr>
+            <td>${esc(w.name)}</td><td class="mono">${esc(w.slug)}</td>
+            <td>${esc(w.member_count)}</td><td>${esc(w.token_count)}</td>
+            <td class="row actions">
+              <button class="btn ghost small" data-ws-view="${w.id}">Members</button>
+              <button class="btn danger small" data-ws-del="${w.id}">Delete</button>
+            </td>
+          </tr>`).join('') || '<tr><td colspan="5">None</td></tr>'}
+        </tbody></table>
+        <div id="admin-ws-detail" style="margin-top:1rem"></div>
+      </div>
+    </div>`;
+
+  $('#admin-ws-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const body = { name: fd.get('name'), ownerUserId: fd.get('ownerUserId') ? Number(fd.get('ownerUserId')) : undefined };
+    try {
+      await api.adminCreateWorkspace(body);
+      pageAdmin('workspaces');
+    } catch (err) {
+      $('#admin-ws-msg').textContent = err.message;
+      $('#admin-ws-msg').className = 'msg error';
+    }
+  };
+  $$('[data-ws-del]').forEach((b) => b.onclick = async () => {
+    if (!confirm('Delete this workspace and all its MySQL data?')) return;
+    await api.adminDeleteWorkspace(b.dataset.wsDel);
+    pageAdmin('workspaces');
+  });
+  $$('[data-ws-view]').forEach((b) => b.onclick = async () => {
+    const d = (await api.adminWorkspace(b.dataset.wsView)).data;
+    const detail = $('#admin-ws-detail');
+    detail.innerHTML = `
+      <h4>${esc(d.workspace.name)} members</h4>
+      <table><thead><tr><th>Email</th><th>Role</th><th></th></tr></thead>
+      <tbody>${(d.members || []).map((m) => `<tr>
+        <td>${esc(m.email)}</td><td>${esc(m.role)}</td>
+        <td><button class="btn ghost small" data-rm="${m.user_id}">Remove</button></td>
+      </tr>`).join('') || '<tr><td colspan="3">No members</td></tr>'}</tbody></table>
+      <form id="admin-add-member" class="row actions" style="margin-top:0.75rem">
+        <select name="userId" required>${users.map((u) => `<option value="${u.id}">${esc(u.email)}</option>`).join('')}</select>
+        <select name="role"><option value="member">member</option><option value="admin">admin</option><option value="owner">owner</option></select>
+        <button class="btn" type="submit">Add member</button>
+      </form>`;
+    $$('[data-rm]', detail).forEach((btn) => btn.onclick = async () => {
+      await api.adminRemoveMember(d.workspace.id, btn.dataset.rm);
+      b.click();
+    });
+    $('#admin-add-member').onsubmit = async (ev) => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      await api.adminAddMember(d.workspace.id, Number(f.get('userId')), f.get('role'));
+      b.click();
+    };
+  });
+}
+
+async function renderAdminSettings(el, group) {
+  const res = await api.adminSettings();
+  const settings = res.data.settings || {};
+  const defs = (res.data.defs || []).filter((d) => d.group === group);
+  const title = { email: 'Email / SMTP', sms: 'SMS', keys: 'Default API keys', general: 'General' }[group] || group;
+  el.innerHTML = `
+    <div class="panel">
+      <div class="panel-h"><h3>${esc(title)}</h3>
+        <span class="hint">Defaults apply to new workspaces. Secrets are write-only.</span></div>
+      <div class="panel-b">
+        <form id="admin-set-form" class="stack">
+          ${defs.map((d) => {
+            const isSecret = d.secret;
+            const val = settings[d.key] || '';
+            return `<div>
+              <label>${esc(d.label)} <span class="mono hint">${esc(d.key)}</span></label>
+              ${isSecret
+                ? `<input name="${esc(d.key)}" type="password" placeholder="${val === '***' ? 'Set (currently configured)' : 'Not set'}" autocomplete="new-password" />`
+                : `<input name="${esc(d.key)}" value="${esc(val)}" />`}
+            </div>`;
+          }).join('') || '<p class="hint">No settings in this group</p>'}
+          <div class="row actions"><button class="btn" type="submit">Save</button></div>
+          <div class="msg" id="admin-set-msg"></div>
+        </form>
+      </div>
+    </div>`;
+
+  $('#admin-set-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const plain = {};
+    const secrets = [];
+    for (const d of defs) {
+      const v = fd.get(d.key);
+      if (d.secret) {
+        if (v && String(v).trim()) secrets.push([d.key, String(v)]);
+      } else {
+        plain[d.key] = v == null ? '' : String(v);
+      }
+    }
+    const msg = $('#admin-set-msg');
+    try {
+      if (Object.keys(plain).length) await api.adminSettingsSave(plain);
+      for (const [k, v] of secrets) await api.adminSettingsSecret(k, v);
+      msg.textContent = 'Saved';
+      msg.className = 'msg ok';
+      toast('Platform settings saved', 'ok');
+    } catch (err) {
+      msg.textContent = err.message;
+      msg.className = 'msg error';
+    }
+  };
+}
+
+async function renderAdminAudit(el) {
+  const rows = asList((await api.adminAudit({ limit: 80 })).data, ['rows']);
+  el.innerHTML = `
+    <div class="panel">
+      <div class="panel-h"><h3>Audit log</h3></div>
+      <div class="panel-b">
+        <table><thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Detail</th></tr></thead>
+        <tbody>
+          ${rows.map((r) => `<tr>
+            <td>${esc(fmtDate(r.at))}</td>
+            <td>${esc(r.actor_email || r.actor_user_id || '—')}</td>
+            <td>${esc(r.action)}</td>
+            <td class="mono">${esc(r.detail || '')}</td>
+          </tr>`).join('') || '<tr><td colspan="4">No audit events yet</td></tr>'}
+        </tbody></table>
+      </div>
+    </div>`;
+}
+
 const PAGES = {
   dashboard: pageDashboard, leads: pageLeads, websites: pageWebsites, design: pageDesign,
   outreach: pageOutreach, pipeline: pagePipeline, jobs: pageJobs, mcp: pageMcp, settings: pageSettings,
+  admin: pageAdmin,
 };
 
 async function navigate() {
@@ -2381,6 +2701,10 @@ async function navigate() {
 
   if (!PAGES[route]) {
     view.innerHTML = '<div class="card error-card"><h2>Page not found</h2><p>Choose a page from the navigation.</p></div>';
+    return;
+  }
+  if (route === 'admin' && !currentUserIsSuperAdmin) {
+    view.innerHTML = '<div class="card error-card"><h2>Super admin only</h2><p>Your account is not a platform administrator.</p></div>';
     return;
   }
   view.innerHTML = '<p class="hint">Loading…</p>';

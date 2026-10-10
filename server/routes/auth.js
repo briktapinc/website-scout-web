@@ -13,6 +13,15 @@ const router = express.Router();
 
 router.post('/register', async (req, res, next) => {
   try {
+    const platform = require('../platform');
+    const open = await platform.getPlatformSetting('registration.open', '1');
+    if (open !== '1') {
+      return res.status(403).json({ ok: false, error: 'REGISTRATION_CLOSED' });
+    }
+    const maintenance = await platform.getPlatformSetting('maintenance_mode', '0');
+    if (maintenance === '1') {
+      return res.status(503).json({ ok: false, error: 'MAINTENANCE_MODE' });
+    }
     const { email, password, name, workspaceName } = req.body || {};
     if (!email || !password) {
       return res.status(400).json({ ok: false, error: 'email and password are required' });
@@ -30,9 +39,15 @@ router.post('/register', async (req, res, next) => {
     res.json({
       ok: true,
       data: {
-        user: { id: created.userId, email: String(email).trim().toLowerCase(), name: name || '' },
+        user: {
+          id: created.userId,
+          email: String(email).trim().toLowerCase(),
+          name: name || '',
+          isSuperAdmin: false,
+        },
         workspaceId: created.workspaceId,
         workspaces,
+        isSuperAdmin: false,
       },
     });
   } catch (e) {
@@ -42,21 +57,37 @@ router.post('/register', async (req, res, next) => {
 
 router.post('/login', async (req, res, next) => {
   try {
+    const platform = require('../platform');
+    const maintenance = await platform.getPlatformSetting('maintenance_mode', '0');
     const { email, password } = req.body || {};
     const user = await findUserByEmail(email);
     if (!user) return res.status(401).json({ ok: false, error: 'INVALID_CREDENTIALS' });
     const ok = await bcrypt.compare(String(password || ''), user.password_hash);
     if (!ok) return res.status(401).json({ ok: false, error: 'INVALID_CREDENTIALS' });
+    if (String(user.status || 'active') === 'disabled') {
+      return res.status(403).json({ ok: false, error: 'ACCOUNT_DISABLED' });
+    }
+    const isSuper = Number(user.is_super_admin) === 1;
+    if (maintenance === '1' && !isSuper) {
+      return res.status(503).json({ ok: false, error: 'MAINTENANCE_MODE' });
+    }
 
     const workspaces = await listWorkspacesForUser(user.id);
     req.session.userId = user.id;
     req.session.workspaceId = workspaces[0] ? workspaces[0].id : null;
+    try { await require('../admin').touchLogin(user.id); } catch { /* ignore */ }
     res.json({
       ok: true,
       data: {
-        user: { id: user.id, email: user.email, name: user.name },
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          isSuperAdmin: isSuper,
+        },
         workspaceId: req.session.workspaceId,
         workspaces,
+        isSuperAdmin: isSuper,
       },
     });
   } catch (e) {
@@ -74,18 +105,29 @@ router.post('/logout', (req, res) => {
 router.get('/me', requireAuth, async (req, res, next) => {
   try {
     const rows = await require('../db').query(
-      'SELECT id, email, name, created_at FROM users WHERE id = :id LIMIT 1',
+      'SELECT id, email, name, is_super_admin, status, created_at FROM users WHERE id = :id LIMIT 1',
       { id: req.session.userId }
     );
     const user = rows[0];
     if (!user) return res.status(401).json({ ok: false, error: 'AUTH_REQUIRED' });
+    if (String(user.status || 'active') === 'disabled') {
+      return res.status(403).json({ ok: false, error: 'ACCOUNT_DISABLED' });
+    }
+    const isSuperAdmin = Number(user.is_super_admin) === 1;
     const workspaces = await listWorkspacesForUser(user.id);
     res.json({
       ok: true,
       data: {
-        user,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          created_at: user.created_at,
+          isSuperAdmin,
+        },
         workspaceId: req.session.workspaceId || (workspaces[0] && workspaces[0].id) || null,
         workspaces,
+        isSuperAdmin,
       },
     });
   } catch (e) {

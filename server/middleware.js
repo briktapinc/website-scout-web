@@ -64,4 +64,18 @@ function requireRole(...roles) {
   };
 }
 
-module.exports = { requireAuth, requireWorkspace, requireRole };
+async function requireSuperAdmin(req, res, next) {
+  try {
+    if (!req.session || !req.session.userId) {
+      return res.status(401).json({ ok: false, error: 'AUTH_REQUIRED' });
+    }
+    const { isSuperAdmin } = require('./admin');
+    const ok = await isSuperAdmin(req.session.userId);
+    if (!ok) return res.status(403).json({ ok: false, error: 'SUPER_ADMIN_REQUIRED' });
+    next();
+  } catch (e) {
+    next(e);
+  }
+}
+
+module.exports = { requireAuth, requireWorkspace, requireRole, requireSuperAdmin };
