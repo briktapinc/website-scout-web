@@ -40,6 +40,15 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
+// Secure cookies only when APP_URL is https (or COOKIE_SECURE=1).
+// HTTP IP deploys must keep secure:false or the browser drops the session.
+const cookieSecure = (() => {
+  if (process.env.COOKIE_SECURE === '1' || process.env.COOKIE_SECURE === 'true') return true;
+  if (process.env.COOKIE_SECURE === '0' || process.env.COOKIE_SECURE === 'false') return false;
+  const appUrl = String(process.env.APP_URL || '');
+  return /^https:/i.test(appUrl);
+})();
+
 app.use(session({
   name: 'scout.sid',
   secret: process.env.SESSION_SECRET || 'dev-change-me',
@@ -49,7 +58,7 @@ app.use(session({
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: cookieSecure,
     maxAge: 14 * 24 * 60 * 60 * 1000,
   },
 }));
