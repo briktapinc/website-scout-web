@@ -17,11 +17,8 @@ const { handleJsonRpc, SERVER_INFO } = require('./server/mcp');
 const { startScheduler } = require('./server/jobs');
 
 const authRoutes = require('./server/routes/auth');
-const settingsRoutes = require('./server/routes/settings');
-const leadsRoutes = require('./server/routes/leads');
-const designRoutes = require('./server/routes/design');
+const domainApi = require('./server/routes/domainApi');
 const jobsRoutes = require('./server/routes/jobs');
-const dashboardRoutes = require('./server/routes/dashboard');
 const mcpAdminRoutes = require('./server/routes/mcpAdmin');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -78,11 +75,8 @@ app.get('/health', async (_req, res) => {
 });
 
 app.use('/api/v1/auth', authRoutes);
-app.use('/api/v1/settings', settingsRoutes);
-app.use('/api/v1/leads', leadsRoutes);
-app.use('/api/v1/design', designRoutes);
+app.use('/api/v1', domainApi);
 app.use('/api/v1/jobs', jobsRoutes);
-app.use('/api/v1/dashboard', dashboardRoutes);
 app.use('/api/v1/mcp', mcpAdminRoutes);
 
 async function mcpHandler(req, res) {

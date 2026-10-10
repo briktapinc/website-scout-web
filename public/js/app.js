@@ -7,7 +7,7 @@ const view = document.getElementById('view');
 const wsSelect = document.getElementById('workspace-select');
 const autoPill = document.getElementById('shell-automation');
 
-const ROUTES = ['dashboard', 'leads', 'design', 'jobs', 'mcp', 'settings'];
+const ROUTES = ['dashboard', 'leads', 'websites', 'design', 'outreach', 'pipeline', 'jobs', 'mcp', 'settings'];
 
 function esc(s) {
   return String(s == null ? '' : s)
@@ -127,7 +127,21 @@ async function pageDashboard() {
 async function pageLeads() {
   view.innerHTML = `
     <h2 class="page-title">Leads</h2>
-    <p class="page-sub">Create and manage prospects for this workspace.</p>
+    <p class="page-sub">Create, discover, score, and research prospects.</p>
+    <div class="panel">
+      <div class="panel-h"><h3>Discover</h3></div>
+      <div class="panel-b">
+        <form id="discover-form" class="stack">
+          <div class="row">
+            <div><label>Category</label><input name="category" value="Plumber" /></div>
+            <div><label>Location</label><input name="location" value="Springfield" /></div>
+            <div><label>Limit</label><input name="limit" type="number" value="8" min="1" max="50" /></div>
+          </div>
+          <div class="row actions"><button class="btn" type="submit">Run discovery</button></div>
+          <div class="msg" id="discover-msg"></div>
+        </form>
+      </div>
+    </div>
     <div class="panel">
       <div class="panel-h"><h3>Add lead</h3></div>
       <div class="panel-b">
@@ -156,7 +170,7 @@ async function pageLeads() {
 
   async function load(q = '') {
     const res = await api.leads(q ? `?q=${encodeURIComponent(q)}` : '');
-    const rows = res.data.leads || [];
+    const rows = res.data.leads || res.data.rows || [];
     document.getElementById('lead-table').innerHTML = `
       <table><thead><tr><th>Name</th><th>City</th><th>Status</th><th>Score</th><th></th></tr></thead>
       <tbody>
@@ -167,6 +181,7 @@ async function pageLeads() {
           <td>${esc(l.score)}</td>
           <td class="row actions">
             <button class="btn ghost" data-score="${l.id}">Score</button>
+            <button class="btn ghost" data-research="${l.id}">Research</button>
             <button class="btn ghost" data-qualify="${l.id}">Qualify</button>
             <button class="btn danger" data-del="${l.id}">Delete</button>
           </td>
@@ -174,9 +189,27 @@ async function pageLeads() {
       </tbody></table>`;
 
     document.querySelectorAll('[data-score]').forEach((b) => b.onclick = async () => { await api.scoreLead(b.dataset.score); load(document.getElementById('lead-q').value); });
+    document.querySelectorAll('[data-research]').forEach((b) => b.onclick = async () => { b.disabled = true; try { await api.researchLead(b.dataset.research); load(document.getElementById('lead-q').value); } catch (e) { alert(e.message); } finally { b.disabled = false; } });
     document.querySelectorAll('[data-qualify]').forEach((b) => b.onclick = async () => { await api.qualifyLead(b.dataset.qualify); load(document.getElementById('lead-q').value); });
     document.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (confirm('Delete lead?')) { await api.deleteLead(b.dataset.del); load(document.getElementById('lead-q').value); } });
   }
+
+  document.getElementById('discover-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(e.target).entries());
+    body.limit = Number(body.limit) || 8;
+    const msg = document.getElementById('discover-msg');
+    msg.textContent = 'Discovering…';
+    try {
+      const res = await api.discover(body);
+      msg.textContent = `Done: ${JSON.stringify(res.data).slice(0, 180)}…`;
+      msg.className = 'msg ok';
+      load();
+    } catch (err) {
+      msg.textContent = err.message;
+      msg.className = 'msg error';
+    }
+  };
 
   document.getElementById('lead-form').onsubmit = async (e) => {
     e.preventDefault();
@@ -199,6 +232,110 @@ async function pageLeads() {
     t = setTimeout(() => load(e.target.value), 250);
   };
   await load();
+}
+
+async function pageWebsites() {
+  const res = await api.websites();
+  const sites = res.data.sites || [];
+  view.innerHTML = `
+    <h2 class="page-title">Websites</h2>
+    <p class="page-sub">Template sites and agent-delivered sites for this workspace.</p>
+    <div class="panel">
+      <div class="panel-h"><h3>Generate for lead</h3></div>
+      <div class="panel-b">
+        <form id="gen-form" class="row actions">
+          <input name="leadId" type="number" min="1" placeholder="Lead id" required style="max-width:140px" />
+          <button class="btn" type="submit">Generate</button>
+        </form>
+        <div class="msg" id="gen-msg"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><h3>Sites</h3></div>
+      <div class="panel-b">
+        <table><thead><tr><th>Name</th><th>Lead</th><th>Status</th><th>Origin</th><th>Updated</th></tr></thead>
+        <tbody>
+          ${sites.map((s) => `<tr><td>${esc(s.name)}</td><td>${esc(s.business_name || s.lead_id || '')}</td><td>${esc(s.status)}</td><td>${esc(s.origin || '')}</td><td>${esc(s.updated_at)}</td></tr>`).join('') || '<tr><td colspan="5">No websites yet</td></tr>'}
+        </tbody></table>
+      </div>
+    </div>`;
+  document.getElementById('gen-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const leadId = Number(new FormData(e.target).get('leadId'));
+    const msg = document.getElementById('gen-msg');
+    msg.textContent = 'Generating…';
+    try {
+      await api.generateSite({ leadId, force: true });
+      msg.textContent = 'Generated';
+      msg.className = 'msg ok';
+      pageWebsites();
+    } catch (err) {
+      msg.textContent = err.message;
+      msg.className = 'msg error';
+    }
+  };
+}
+
+async function pageOutreach() {
+  const [tpl, camps, stats] = await Promise.all([api.templates(), api.campaigns(), api.outreachStats()]);
+  const templates = tpl.data.templates || [];
+  const campaigns = camps.data.rows || camps.data.campaigns || (Array.isArray(camps.data) ? camps.data : []);
+  view.innerHTML = `
+    <h2 class="page-title">Outreach</h2>
+    <p class="page-sub">Templates, campaigns, and queue processing.</p>
+    <div class="grid">
+      <div class="stat"><div class="n">${esc((stats.data && (stats.data.queued ?? stats.data.queuedToday)) ?? '—')}</div><div class="l">Queued / stats</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><h3>Save template</h3></div>
+      <div class="panel-b">
+        <form id="tpl-form" class="stack">
+          <div class="row"><div><label>Name</label><input name="name" required /></div><div><label>Subject</label><input name="subject" required /></div></div>
+          <div><label>Body</label><textarea name="body" required>Hi {{business_name}}, …</textarea></div>
+          <div class="row actions"><button class="btn" type="submit">Save</button><button class="btn ghost" type="button" id="process-q">Process queue</button></div>
+          <div class="msg" id="tpl-msg"></div>
+        </form>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><h3>Templates</h3></div>
+      <div class="panel-b"><table><thead><tr><th>ID</th><th>Name</th><th>Subject</th></tr></thead>
+        <tbody>${templates.map((t) => `<tr><td>${t.id}</td><td>${esc(t.name)}</td><td>${esc(t.subject)}</td></tr>`).join('') || '<tr><td colspan="3">None</td></tr>'}</tbody></table></div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><h3>Campaigns</h3></div>
+      <div class="panel-b"><table><thead><tr><th>Name</th><th>Status</th></tr></thead>
+        <tbody>${(campaigns.items || campaigns || []).map ? '' : ''}
+          ${([].concat(campaigns.items || campaigns || [])).map((c) => `<tr><td>${esc(c.name)}</td><td>${esc(c.status)}</td></tr>`).join('') || '<tr><td colspan="2">None yet — create via API/MCP with leadIds + templateId</td></tr>'}
+        </tbody></table></div>
+    </div>`;
+  document.getElementById('tpl-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(e.target).entries());
+    try { await api.saveTemplate(body); document.getElementById('tpl-msg').textContent = 'Saved'; pageOutreach(); }
+    catch (err) { document.getElementById('tpl-msg').textContent = err.message; document.getElementById('tpl-msg').className = 'msg error'; }
+  };
+  document.getElementById('process-q').onclick = async () => {
+    try { await api.processQueue(); alert('Queue processed'); pageOutreach(); }
+    catch (e) { alert(e.message); }
+  };
+}
+
+async function pagePipeline() {
+  const res = await api.pipeline();
+  const columns = (res.data && res.data.columns) || [];
+  view.innerHTML = `
+    <h2 class="page-title">Pipeline</h2>
+    <p class="page-sub">Lead stages for this workspace.</p>
+    <div class="grid">
+      ${columns.map((col) => `
+        <div class="panel" style="margin:0">
+          <div class="panel-h"><h3>${esc(col.label || col.status || col.id)}</h3><span class="msg">${esc(col.total ?? (col.leads || []).length)}</span></div>
+          <div class="panel-b">
+            ${(col.leads || []).slice(0, 12).map((l) => `<div style="padding:0.35rem 0;border-bottom:1px solid var(--line)">${esc(l.business_name)} <span class="msg">${esc(l.score ?? '')}</span></div>`).join('') || '<div class="msg">Empty</div>'}
+          </div>
+        </div>`).join('') || '<p class="msg">No pipeline columns</p>'}
+    </div>`;
 }
 
 async function pageDesign() {
@@ -384,8 +521,10 @@ async function pageSettings() {
       <div class="panel-b">
         <form id="secret-form" class="stack">
           <div><label>ai.api_key ${s['ai.api_key'] === '***' ? '(set)' : '(empty)'}</label><input name="ai.api_key" type="password" placeholder="Paste new key" /></div>
-          <div><label>smtp.pass</label><input name="smtp.pass" type="password" placeholder="Paste new password" /></div>
-          <div><label>providers.tavily.api_key</label><input name="providers.tavily.api_key" type="password" /></div>
+          <div><label>smtp.pass</label><input name="smtp.pass" type="password" placeholder="Paste SMTP password" /></div>
+          <div><label>providers.tavily.api_key (needed for Discover)</label><input name="providers.tavily.api_key" type="password" /></div>
+          <div><label>pexels.api_key</label><input name="pexels.api_key" type="password" /></div>
+          <div><label>cf.api_token</label><input name="cf.api_token" type="password" /></div>
           <div class="row actions"><button class="btn" type="submit">Save secrets</button></div>
           <div class="msg" id="sec-msg"></div>
         </form>
@@ -445,7 +584,10 @@ async function navigate() {
   try {
     if (route === 'dashboard') await pageDashboard();
     else if (route === 'leads') await pageLeads();
+    else if (route === 'websites') await pageWebsites();
     else if (route === 'design') await pageDesign();
+    else if (route === 'outreach') await pageOutreach();
+    else if (route === 'pipeline') await pagePipeline();
     else if (route === 'jobs') await pageJobs();
     else if (route === 'mcp') await pageMcp();
     else if (route === 'settings') await pageSettings();

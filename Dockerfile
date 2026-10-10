@@ -11,6 +11,7 @@ RUN npm install --omit=dev
 
 COPY server.js ./
 COPY server ./server
+COPY src ./src
 COPY sql ./sql
 COPY public ./public
 COPY scripts ./scripts

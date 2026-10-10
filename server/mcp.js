@@ -1,249 +1,177 @@
 'use strict';
 
-const { query } = require('./db');
-const { getSetting, setSetting, logActivity, createWorkspaceToken } = require('./workspace');
-const { SECRET_KEYS, SETTABLE_KEYS } = require('./settingsKeys');
+const domain = require('./domain');
 const jobs = require('./jobs');
+const { createWorkspaceToken } = require('./workspace');
 
-const SERVER_INFO = { name: 'website-scout-web-mcp', version: '0.1.0' };
+const SERVER_INFO = { name: 'website-scout-web-mcp', version: '0.2.0' };
 const PROTOCOL_VERSION = '2025-11-25';
 
 function toolDefs() {
   return [
-    { name: 'lead.search', description: 'Search leads in this workspace.', inputSchema: { type: 'object', properties: { q: { type: 'string' }, status: { type: 'string' }, limit: { type: 'integer' } } } },
-    { name: 'lead.get', description: 'Get one lead by id.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
+    { name: 'lead.search', description: 'Search leads.', inputSchema: { type: 'object', properties: { q: { type: 'string' }, status: { type: 'string' }, minScore: { type: 'integer' }, limit: { type: 'integer' } } } },
+    { name: 'lead.get', description: 'Get one lead with facts/scores.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
     { name: 'lead.create', description: 'Create a lead.', inputSchema: { type: 'object', properties: { business_name: { type: 'string' }, email: { type: 'string' }, phone: { type: 'string' }, city: { type: 'string' }, category: { type: 'string' }, website: { type: 'string' }, status: { type: 'string' }, notes: { type: 'string' } }, required: ['business_name'] } },
-    { name: 'lead.qualify', description: 'Mark lead qualified.', inputSchema: { type: 'object', properties: { id: { type: 'integer' }, note: { type: 'string' } }, required: ['id'] } },
+    { name: 'lead.update', description: 'Update a lead.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
+    { name: 'lead.delete', description: 'Delete a lead.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
+    { name: 'lead.qualify', description: 'Qualify a lead.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
     { name: 'lead.score', description: 'Score a lead.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
-    { name: 'design.pending', description: 'Design jobs waiting on agent.', inputSchema: { type: 'object', properties: {} } },
+    { name: 'lead.research', description: 'Research a lead.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
+    { name: 'lead.discover', description: 'Discover leads via providers.', inputSchema: { type: 'object', properties: { category: { type: 'string' }, location: { type: 'string' }, limit: { type: 'integer' }, provider: { type: 'string' }, group: { type: 'string' } } } },
+    { name: 'lead.importCsv', description: 'Import CSV text.', inputSchema: { type: 'object', properties: { text: { type: 'string' }, group: { type: 'string' } }, required: ['text'] } },
+    { name: 'lead.merge', description: 'Merge duplicate leads.', inputSchema: { type: 'object', properties: { keepId: { type: 'integer' }, dropIds: { type: 'array', items: { type: 'integer' } } }, required: ['keepId', 'dropIds'] } },
+    { name: 'lead.duplicates', description: 'Find duplicates for a lead.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
+    { name: 'lead.facets', description: 'Lead filter facets.', inputSchema: { type: 'object', properties: {} } },
+    { name: 'lead.bulk', description: 'Bulk lead actions.', inputSchema: { type: 'object', properties: { action: { type: 'string' }, ids: { type: 'array', items: { type: 'integer' } }, value: { type: 'string' } }, required: ['action', 'ids'] } },
+    { name: 'design.pending', description: 'Jobs waiting on agent.', inputSchema: { type: 'object', properties: {} } },
     { name: 'design.next', description: 'Claim next waiting_on_agent job.', inputSchema: { type: 'object', properties: {} } },
-    { name: 'design.create', description: 'Create a design job.', inputSchema: { type: 'object', properties: { type: { type: 'string' }, title: { type: 'string' }, instructions: { type: 'string' }, leadId: { type: 'integer' } }, required: ['title', 'instructions'] } },
-    { name: 'design.deliver', description: 'Deliver design payload.', inputSchema: { type: 'object', properties: { id: { type: 'integer' }, payload: { type: 'object' } }, required: ['id', 'payload'] } },
-    { name: 'settings.get', description: 'Read workspace settings (secrets redacted).', inputSchema: { type: 'object', properties: {} } },
-    { name: 'settings.set', description: 'Set a non-secret setting.', inputSchema: { type: 'object', properties: { key: { type: 'string' }, value: { type: 'string' } }, required: ['key', 'value'] } },
+    { name: 'design.list', description: 'List design jobs.', inputSchema: { type: 'object', properties: { status: { type: 'string' }, limit: { type: 'integer' } } } },
+    { name: 'design.get', description: 'Get design job.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
+    { name: 'design.create', description: 'Create design job.', inputSchema: { type: 'object', properties: { type: { type: 'string' }, title: { type: 'string' }, instructions: { type: 'string' }, leadId: { type: 'integer' } }, required: ['title', 'instructions'] } },
+    { name: 'design.deliver', description: 'Deliver design payload.', inputSchema: { type: 'object', properties: { id: { type: 'integer' }, payload: { type: 'object' }, claims: { type: 'array' } }, required: ['id', 'payload'] } },
+    { name: 'design.ask', description: 'Ask clarifying question.', inputSchema: { type: 'object', properties: { id: { type: 'integer' }, question: { type: 'string' } }, required: ['id', 'question'] } },
+    { name: 'design.review', description: 'Review delivered website (no screenshots on web).', inputSchema: { type: 'object', properties: { id: { type: 'integer' }, skipAi: { type: 'boolean' } }, required: ['id'] } },
+    { name: 'design.redesign', description: 'Queue full redesign.', inputSchema: { type: 'object', properties: { id: { type: 'integer' }, instructions: { type: 'string' } }, required: ['id'] } },
+    { name: 'design.improve', description: 'Queue incremental improvements.', inputSchema: { type: 'object', properties: { id: { type: 'integer' }, instructions: { type: 'string' } }, required: ['id'] } },
+    { name: 'design.previewUrl', description: 'HTTP preview URL for delivered site.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
+    { name: 'website.list', description: 'List websites.', inputSchema: { type: 'object', properties: { status: { type: 'string' } } } },
+    { name: 'website.get', description: 'Get website.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
+    { name: 'website.generate', description: 'Generate template website for lead.', inputSchema: { type: 'object', properties: { leadId: { type: 'integer' }, force: { type: 'boolean' } }, required: ['leadId'] } },
+    { name: 'website.qa', description: 'QA a website.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
+    { name: 'website.export', description: 'Export website HTML.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
+    { name: 'outreach.campaigns', description: 'Campaign admin list|create|setStatus|messages.', inputSchema: { type: 'object', properties: { action: { type: 'string' }, id: { type: 'integer' }, name: { type: 'string' }, templateId: { type: 'integer' }, leadIds: { type: 'array', items: { type: 'integer' } }, status: { type: 'string' } }, required: ['action'] } },
+    { name: 'outreach.templates', description: 'Template list|save|delete.', inputSchema: { type: 'object', properties: { action: { type: 'string' }, id: { type: 'integer' }, name: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' } }, required: ['action'] } },
+    { name: 'outreach.processQueue', description: 'Process email queue.', inputSchema: { type: 'object', properties: {} } },
+    { name: 'outreach.stats', description: 'Outreach stats.', inputSchema: { type: 'object', properties: {} } },
+    { name: 'outreach.pipeline', description: 'Pipeline board.', inputSchema: { type: 'object', properties: {} } },
+    { name: 'email.compose', description: 'Compose from template.', inputSchema: { type: 'object', properties: { leadId: { type: 'integer' }, templateId: { type: 'integer' } }, required: ['leadId', 'templateId'] } },
+    { name: 'settings.get', description: 'Read settings (secrets redacted).', inputSchema: { type: 'object', properties: {} } },
+    { name: 'settings.set', description: 'Set non-secret setting.', inputSchema: { type: 'object', properties: { key: { type: 'string' }, value: { type: 'string' } }, required: ['key', 'value'] } },
     { name: 'automation.pause', description: 'Pause automation.', inputSchema: { type: 'object', properties: {} } },
     { name: 'automation.resume', description: 'Resume automation.', inputSchema: { type: 'object', properties: {} } },
     { name: 'analytics.get', description: 'Dashboard stats.', inputSchema: { type: 'object', properties: {} } },
+    { name: 'discovery.schedule', description: 'get|set|runNow discovery schedule.', inputSchema: { type: 'object', properties: { action: { type: 'string' } }, required: ['action'] } },
+    { name: 'cloudflare.publish', description: 'Publish site to Cloudflare Pages.', inputSchema: { type: 'object', properties: { websiteId: { type: 'integer' } }, required: ['websiteId'] } },
+    { name: 'cloudflare.test', description: 'Test Cloudflare credentials.', inputSchema: { type: 'object', properties: {} } },
     { name: 'jobs.list', description: 'List scheduled jobs.', inputSchema: { type: 'object', properties: {} } },
-    { name: 'jobs.create', description: 'Create a scheduled job (discovery, outreach_process, design_poll_notify, custom).', inputSchema: { type: 'object', properties: { name: { type: 'string' }, type: { type: 'string' }, interval_minutes: { type: 'integer' }, cron_expr: { type: 'string' }, payload: { type: 'object' }, enabled: { type: 'boolean' } }, required: ['name', 'type'] } },
-    { name: 'jobs.update', description: 'Update a scheduled job.', inputSchema: { type: 'object', properties: { id: { type: 'integer' }, name: { type: 'string' }, enabled: { type: 'boolean' }, interval_minutes: { type: 'integer' }, payload: { type: 'object' } }, required: ['id'] } },
-    { name: 'jobs.delete', description: 'Delete a scheduled job.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
-    { name: 'jobs.runNow', description: 'Run a scheduled job immediately.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
+    { name: 'jobs.create', description: 'Create scheduled job.', inputSchema: { type: 'object', properties: { name: { type: 'string' }, type: { type: 'string' }, interval_minutes: { type: 'integer' }, payload: { type: 'object' } }, required: ['name', 'type'] } },
+    { name: 'jobs.update', description: 'Update job.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
+    { name: 'jobs.delete', description: 'Delete job.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
+    { name: 'jobs.runNow', description: 'Run job now.', inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] } },
   ];
 }
 
 async function callTool(workspaceId, name, args = {}) {
   const a = args || {};
+  const ws = workspaceId;
 
-  if (name === 'lead.search') {
-    const limit = Math.min(100, Math.max(1, Number(a.limit) || 20));
-    const params = { workspaceId };
-    let where = 'workspace_id = :workspaceId';
-    if (a.status) { where += ' AND status = :status'; params.status = a.status; }
-    if (a.q) { where += ' AND (business_name LIKE :q OR email LIKE :q OR city LIKE :q)'; params.q = `%${a.q}%`; }
-    const leads = await query(`SELECT id, business_name, category, city, email, status, score, updated_at FROM leads WHERE ${where} ORDER BY updated_at DESC LIMIT ${limit}`, params);
-    return { ok: true, data: { leads } };
-  }
+  try {
+    if (name === 'lead.search') return { ok: true, data: domain.leadsList(ws, a) };
+    if (name === 'lead.get') {
+      const data = domain.leadsGet(ws, a.id);
+      if (!data) return { ok: false, error: 'NOT_FOUND' };
+      return { ok: true, data };
+    }
+    if (name === 'lead.create') return { ok: true, data: { lead: domain.leadsCreate(ws, a) } };
+    if (name === 'lead.update') {
+      const { id, ...patch } = a;
+      return { ok: true, data: { lead: domain.leadsUpdate(ws, id, patch) } };
+    }
+    if (name === 'lead.delete') { domain.leadsDelete(ws, a.id); return { ok: true, data: { id: a.id } }; }
+    if (name === 'lead.qualify') return { ok: true, data: { lead: domain.leadsQualify(ws, a.id) } };
+    if (name === 'lead.score') return { ok: true, data: domain.leadsScore(ws, a.id) };
+    if (name === 'lead.research') return { ok: true, data: await domain.leadsResearch(ws, a.id) };
+    if (name === 'lead.discover') return { ok: true, data: await domain.leadsDiscover(ws, a) };
+    if (name === 'lead.importCsv') return { ok: true, data: domain.leadsImportCsv(ws, a.text, a) };
+    if (name === 'lead.merge') return { ok: true, data: { lead: domain.leadsMerge(ws, a.keepId, a.dropIds) } };
+    if (name === 'lead.duplicates') return { ok: true, data: { duplicates: domain.leadsDuplicates(ws, a.id) } };
+    if (name === 'lead.facets') return { ok: true, data: { facets: domain.leadsFacets(ws) } };
+    if (name === 'lead.bulk') return { ok: true, data: { bulk: await domain.leadsBulk(ws, a) } };
 
-  if (name === 'lead.get') {
-    const lead = (await query('SELECT * FROM leads WHERE id = :id AND workspace_id = :workspaceId', { id: a.id, workspaceId }))[0];
-    if (!lead) return { ok: false, error: 'NOT_FOUND' };
-    return { ok: true, data: { lead } };
-  }
+    if (name === 'design.pending') return { ok: true, data: domain.designPending(ws) };
+    if (name === 'design.next') return { ok: true, data: { job: domain.designNext(ws) } };
+    if (name === 'design.list') return { ok: true, data: { jobs: domain.designList(ws, a) } };
+    if (name === 'design.get') return { ok: true, data: { job: domain.designGet(ws, a.id) } };
+    if (name === 'design.create') return { ok: true, data: { job: domain.designCreate(ws, a) } };
+    if (name === 'design.deliver') return { ok: true, data: { job: domain.designDeliver(ws, a.id, a.payload, a.claims, a) } };
+    if (name === 'design.ask') return { ok: true, data: domain.designAsk(ws, a.id, a.question) };
+    if (name === 'design.review') return { ok: true, data: await domain.designReview(ws, a.id, a) };
+    if (name === 'design.redesign') return { ok: true, data: await domain.designRedesign(ws, a.id, a) };
+    if (name === 'design.improve') return { ok: true, data: await domain.designImprove(ws, a.id, a) };
+    if (name === 'design.previewUrl') return { ok: true, data: await domain.designPreviewUrl(ws, a.id, false) };
 
-  if (name === 'lead.create') {
-    await query(
-      `INSERT INTO leads (workspace_id, business_name, category, phone, email, website, city, status, notes, source)
-       VALUES (:workspaceId, :business_name, :category, :phone, :email, :website, :city, :status, :notes, 'mcp')`,
-      {
-        workspaceId,
-        business_name: a.business_name,
-        category: a.category || null,
-        phone: a.phone || null,
-        email: a.email || null,
-        website: a.website || null,
-        city: a.city || null,
-        status: a.status || 'new',
-        notes: a.notes || null,
-      }
-    );
-    const lead = (await query('SELECT * FROM leads WHERE workspace_id = :workspaceId ORDER BY id DESC LIMIT 1', { workspaceId }))[0];
-    return { ok: true, data: { lead } };
-  }
+    if (name === 'website.list') return { ok: true, data: domain.sitesList(ws, a) };
+    if (name === 'website.get') return { ok: true, data: { site: domain.sitesGet(ws, a.id) } };
+    if (name === 'website.generate') return { ok: true, data: await domain.sitesGenerate(ws, a.leadId, a) };
+    if (name === 'website.qa') return { ok: true, data: await domain.sitesQa(ws, a.id) };
+    if (name === 'website.export') return { ok: true, data: domain.sitesExport(ws, a.id) };
 
-  if (name === 'lead.qualify') {
-    await query(
-      `UPDATE leads SET qualified = 1, status = 'qualified', qualification_note = :note
-       WHERE id = :id AND workspace_id = :workspaceId`,
-      { id: a.id, workspaceId, note: a.note || null }
-    );
-    return { ok: true, data: { id: a.id, qualified: true } };
-  }
+    if (name === 'outreach.campaigns') {
+      if (a.action === 'list') return { ok: true, data: domain.campaignsList(ws, a) };
+      if (a.action === 'create') return { ok: true, data: domain.campaignsCreate(ws, a) };
+      if (a.action === 'setStatus') return { ok: true, data: domain.campaignsSetStatus(ws, a.id, a.status) };
+      if (a.action === 'messages') return { ok: true, data: domain.campaignsMessages(ws, a.id, a) };
+      return { ok: false, error: 'Unknown campaigns action' };
+    }
+    if (name === 'outreach.templates') {
+      if (a.action === 'list') return { ok: true, data: { templates: domain.templatesList(ws) } };
+      if (a.action === 'save') return { ok: true, data: domain.templatesSave(ws, a) };
+      if (a.action === 'delete') return { ok: true, data: domain.templatesDelete(ws, a.id) };
+      return { ok: false, error: 'Unknown templates action' };
+    }
+    if (name === 'outreach.processQueue') return { ok: true, data: await domain.outreachProcessQueue(ws) };
+    if (name === 'outreach.stats') return { ok: true, data: domain.outreachStats(ws) };
+    if (name === 'outreach.pipeline') return { ok: true, data: domain.pipelineBoard(ws, a) };
+    if (name === 'email.compose') return { ok: true, data: domain.emailCompose(ws, a.leadId, a.templateId) };
 
-  if (name === 'lead.score') {
-    // reuse scoring via HTTP route logic would be cleaner; inline simple score
-    const lead = (await query('SELECT * FROM leads WHERE id = :id AND workspace_id = :workspaceId', { id: a.id, workspaceId }))[0];
-    if (!lead) return { ok: false, error: 'NOT_FOUND' };
-    let score = 20;
-    if (lead.email) score += 15;
-    if (lead.phone) score += 10;
-    if (lead.website) score += 10;
-    if (lead.city) score += 5;
-    score = Math.min(100, score);
-    await query('UPDATE leads SET score = :score WHERE id = :id AND workspace_id = :workspaceId', { score, id: a.id, workspaceId });
-    return { ok: true, data: { id: a.id, score } };
-  }
+    if (name === 'settings.get') return { ok: true, data: { settings: domain.settingsGetAll(ws) } };
+    if (name === 'settings.set') return { ok: true, data: domain.settingsSet(ws, a.key, a.value) };
+    if (name === 'automation.pause') return { ok: true, data: domain.automationSet(ws, true) };
+    if (name === 'automation.resume') return { ok: true, data: domain.automationSet(ws, false) };
+    if (name === 'analytics.get') return { ok: true, data: domain.dashboardStats(ws) };
 
-  if (name === 'design.pending') {
-    const waiting = await query(
-      `SELECT id, type, title, status, updated_at FROM design_jobs
-       WHERE workspace_id = :workspaceId AND status IN ('waiting_on_agent','questions_pending')
-       ORDER BY updated_at ASC LIMIT 50`,
-      { workspaceId }
-    );
-    return {
-      ok: true,
-      data: {
-        total: waiting.length,
-        counts: {
-          waiting_on_agent: waiting.filter((j) => j.status === 'waiting_on_agent').length,
-          questions_pending: waiting.filter((j) => j.status === 'questions_pending').length,
-        },
-        preview: waiting.slice(0, 10),
-      },
-    };
-  }
+    if (name === 'discovery.schedule') {
+      if (a.action === 'get') return { ok: true, data: domain.discoveryGet(ws) };
+      if (a.action === 'set') return { ok: true, data: { schedule: domain.discoverySet(ws, a) } };
+      if (a.action === 'runNow') return { ok: true, data: await domain.discoveryRunNow(ws) };
+      return { ok: false, error: 'Unknown discovery action' };
+    }
+    if (name === 'cloudflare.publish') return { ok: true, data: await domain.cfPublish(ws, a.websiteId, a.dir) };
+    if (name === 'cloudflare.test') return { ok: true, data: await domain.cfTest(ws) };
 
-  if (name === 'design.next') {
-    const rows = await query(
-      `SELECT * FROM design_jobs WHERE workspace_id = :workspaceId AND status = 'waiting_on_agent' ORDER BY updated_at ASC LIMIT 1`,
-      { workspaceId }
-    );
-    if (!rows[0]) return { ok: true, data: { job: null } };
-    await query(`UPDATE design_jobs SET status = 'in_progress' WHERE id = :id AND workspace_id = :workspaceId`, { id: rows[0].id, workspaceId });
-    rows[0].status = 'in_progress';
-    return { ok: true, data: { job: rows[0] } };
-  }
+    if (name === 'jobs.list') return { ok: true, data: { jobs: await jobs.listJobs(ws), types: jobs.JOB_TYPES } };
+    if (name === 'jobs.create') return { ok: true, data: { job: await jobs.createJob(ws, a) } };
+    if (name === 'jobs.update') return { ok: true, data: { job: await jobs.updateJob(ws, a.id, a) } };
+    if (name === 'jobs.delete') return { ok: true, data: await jobs.deleteJob(ws, a.id) };
+    if (name === 'jobs.runNow') return { ok: true, data: await jobs.executeJob(ws, a.id, { force: true }) };
 
-  if (name === 'design.create') {
-    await query(
-      `INSERT INTO design_jobs (workspace_id, lead_id, type, title, instructions, status)
-       VALUES (:workspaceId, :leadId, :type, :title, :instructions, 'waiting_on_agent')`,
-      {
-        workspaceId,
-        leadId: a.leadId || null,
-        type: a.type || 'website',
-        title: a.title,
-        instructions: a.instructions,
-      }
-    );
-    const job = (await query('SELECT * FROM design_jobs WHERE workspace_id = :workspaceId ORDER BY id DESC LIMIT 1', { workspaceId }))[0];
-    return { ok: true, data: { job } };
+    return { ok: false, error: `Unknown tool: ${name}` };
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
   }
-
-  if (name === 'design.deliver') {
-    await query(
-      `UPDATE design_jobs SET status = 'delivered', delivery = CAST(:delivery AS JSON)
-       WHERE id = :id AND workspace_id = :workspaceId`,
-      { id: a.id, workspaceId, delivery: JSON.stringify(a.payload) }
-    );
-    return { ok: true, data: { id: a.id, status: 'delivered' } };
-  }
-
-  if (name === 'settings.get') {
-    const rows = await query('SELECT `key`, value FROM workspace_settings WHERE workspace_id = :workspaceId', { workspaceId });
-    const settings = {};
-    for (const r of rows) settings[r.key] = SECRET_KEYS.includes(r.key) && r.value ? '***' : r.value;
-    return { ok: true, data: { settings } };
-  }
-
-  if (name === 'settings.set') {
-    if (!SETTABLE_KEYS.includes(a.key)) return { ok: false, error: 'KEY_NOT_SETTABLE' };
-    await setSetting(workspaceId, a.key, a.value);
-    return { ok: true, data: { key: a.key, value: a.value } };
-  }
-
-  if (name === 'automation.pause') {
-    await setSetting(workspaceId, 'automation_paused', '1');
-    await logActivity(workspaceId, 'automation', 'Automation PAUSED via MCP');
-    return { ok: true, data: { paused: true } };
-  }
-
-  if (name === 'automation.resume') {
-    await setSetting(workspaceId, 'automation_paused', '0');
-    await logActivity(workspaceId, 'automation', 'Automation RESUMED via MCP');
-    return { ok: true, data: { paused: false } };
-  }
-
-  if (name === 'analytics.get') {
-    const leadsTotal = (await query('SELECT COUNT(*) AS c FROM leads WHERE workspace_id = :workspaceId', { workspaceId }))[0].c;
-    const waiting = (await query(`SELECT COUNT(*) AS c FROM design_jobs WHERE workspace_id = :workspaceId AND status = 'waiting_on_agent'`, { workspaceId }))[0].c;
-    const jobsEnabled = (await query('SELECT COUNT(*) AS c FROM scheduled_jobs WHERE workspace_id = :workspaceId AND enabled = 1', { workspaceId }))[0].c;
-    return {
-      ok: true,
-      data: {
-        leadsTotal: Number(leadsTotal),
-        designJobsWaitingOnAgent: Number(waiting),
-        jobsEnabled: Number(jobsEnabled),
-        automationPaused: (await getSetting(workspaceId, 'automation_paused', '0')) === '1',
-      },
-    };
-  }
-
-  if (name === 'jobs.list') {
-    return { ok: true, data: { jobs: await jobs.listJobs(workspaceId), types: jobs.JOB_TYPES } };
-  }
-  if (name === 'jobs.create') {
-    return { ok: true, data: { job: await jobs.createJob(workspaceId, a) } };
-  }
-  if (name === 'jobs.update') {
-    return { ok: true, data: { job: await jobs.updateJob(workspaceId, a.id, a) } };
-  }
-  if (name === 'jobs.delete') {
-    return { ok: true, data: await jobs.deleteJob(workspaceId, a.id) };
-  }
-  if (name === 'jobs.runNow') {
-    return { ok: true, data: await jobs.executeJob(workspaceId, a.id, { force: true }) };
-  }
-
-  return { ok: false, error: `Unknown tool: ${name}` };
 }
 
 async function handleJsonRpc(workspaceId, body) {
   const req = typeof body === 'string' ? JSON.parse(body) : body;
   const id = Object.prototype.hasOwnProperty.call(req, 'id') ? req.id : undefined;
   const isNotification = id === undefined;
-
   const reply = (result, error) => {
     if (isNotification) return null;
     if (error) return { jsonrpc: '2.0', id, error };
     return { jsonrpc: '2.0', id, result };
   };
-
   try {
     if (req.method === 'initialize') {
-      return reply({
-        protocolVersion: PROTOCOL_VERSION,
-        capabilities: { tools: {} },
-        serverInfo: SERVER_INFO,
-      });
+      return reply({ protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: SERVER_INFO });
     }
-    if (req.method === 'notifications/initialized' || req.method === 'initialized') {
-      return null;
-    }
+    if (req.method === 'notifications/initialized' || req.method === 'initialized') return null;
     if (req.method === 'ping') return reply({});
     if (req.method === 'tools/list') {
       return reply({ tools: toolDefs().map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) });
     }
     if (req.method === 'tools/call') {
-      const name = req.params && req.params.name;
-      const args = (req.params && req.params.arguments) || {};
-      const outcome = await callTool(workspaceId, name, args);
-      const text = JSON.stringify(outcome);
-      return reply({
-        content: [{ type: 'text', text }],
-        isError: !outcome.ok,
-      });
+      const outcome = await callTool(workspaceId, req.params && req.params.name, (req.params && req.params.arguments) || {});
+      return reply({ content: [{ type: 'text', text: JSON.stringify(outcome) }], isError: !outcome.ok });
     }
     return reply(null, { code: -32601, message: `Method not found: ${req.method}` });
   } catch (e) {

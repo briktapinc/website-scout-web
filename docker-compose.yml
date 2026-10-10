@@ -24,10 +24,14 @@ services:
         condition: service_healthy
     ports:
       - "${APP_PORT:-3080}:3000"
+    volumes:
+      - scout_workspaces:/app/data/workspaces
+      - scout_exports:/root/website-scout-exports
     environment:
       NODE_ENV: production
       PORT: "3000"
       DB_DRIVER: mysql
+      WORKSPACE_DATA_DIR: /app/data/workspaces
       MYSQL_HOST: mysql
       MYSQL_PORT: "3306"
       MYSQL_USER: ${MYSQL_USER:-scout}
@@ -35,9 +39,12 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-website_scout}
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
       APP_URL: ${APP_URL:-http://187.77.16.73:3080}
+      COOKIE_SECURE: "0"
       BOOTSTRAP_EMAIL: ${BOOTSTRAP_EMAIL:-}
       BOOTSTRAP_PASSWORD: ${BOOTSTRAP_PASSWORD:-}
       BOOTSTRAP_WORKSPACE: ${BOOTSTRAP_WORKSPACE:-Primary}
 
 volumes:
   scout_mysql:
+  scout_workspaces:
+  scout_exports:

@@ -134,45 +134,20 @@ async function deleteJob(workspaceId, id) {
 }
 
 async function runJobLogic(workspaceId, job) {
-  const paused = (await getSetting(workspaceId, 'automation_paused', '0')) === '1';
-  if (paused && job.type !== 'custom') {
-    return { skipped: true, reason: 'automation_paused' };
-  }
-
+  const domain = require('./domain');
   const payload = typeof job.payload === 'string' ? JSON.parse(job.payload || '{}') : (job.payload || {});
 
   if (job.type === 'discovery') {
-    // Placeholder discovery run — records intent; wire providers later.
-    await logActivity(
-      workspaceId,
-      'discovery',
-      `Scheduled discovery tick (category=${payload.category || 'n/a'}, location=${payload.location || 'n/a'})`
-    );
-    return {
-      ok: true,
-      note: 'Discovery job recorded. Connect Tavily key in Settings to ingest leads on future runs.',
-      payload,
-    };
+    return domain.runDiscoveryJobTick(workspaceId, payload);
   }
 
   if (job.type === 'outreach_process') {
-    const queued = await query(
-      `SELECT COUNT(*) AS c FROM campaign_messages
-       WHERE workspace_id = :workspaceId AND status = 'queued'
-         AND (scheduled_at IS NULL OR scheduled_at <= UTC_TIMESTAMP())`,
-      { workspaceId }
-    );
-    await logActivity(workspaceId, 'outreach', `Process queue tick: ${queued[0].c} due messages`);
-    return { ok: true, due: queued[0].c };
+    return domain.runOutreachJobTick(workspaceId);
   }
 
   if (job.type === 'design_poll_notify') {
-    const waiting = await query(
-      `SELECT COUNT(*) AS c FROM design_jobs
-       WHERE workspace_id = :workspaceId AND status = 'waiting_on_agent'`,
-      { workspaceId }
-    );
-    return { ok: true, waiting_on_agent: waiting[0].c };
+    const pending = domain.designPending(workspaceId);
+    return { ok: true, ...pending };
   }
 
   if (job.type === 'custom') {
