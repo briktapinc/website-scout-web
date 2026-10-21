@@ -20,7 +20,18 @@ class DbSessionStore extends session.Store {
         await query('DELETE FROM sessions WHERE session_id = :sid', { sid });
         return cb(null, null);
       }
-      return cb(null, JSON.parse(row.data));
+      let sess;
+      try {
+        sess = JSON.parse(row.data);
+      } catch (e) {
+        await query('DELETE FROM sessions WHERE session_id = :sid', { sid });
+        return cb(null, null);
+      }
+      // Rehydrate cookie.expires so express-session rolling/maxAge math stays valid.
+      if (sess && sess.cookie && typeof sess.cookie.expires === 'string') {
+        sess.cookie.expires = new Date(sess.cookie.expires);
+      }
+      return cb(null, sess);
     } catch (e) {
       return cb(e);
     }
@@ -28,7 +39,11 @@ class DbSessionStore extends session.Store {
 
   async set(sid, sess, cb) {
     try {
-      const maxAge = sess.cookie && sess.cookie.maxAge ? sess.cookie.maxAge : 86400000;
+      const maxAge = sess.cookie && Number(sess.cookie.maxAge) > 0
+        ? Number(sess.cookie.maxAge)
+        : (sess.cookie && Number(sess.cookie.originalMaxAge) > 0
+          ? Number(sess.cookie.originalMaxAge)
+          : 14 * 24 * 60 * 60 * 1000);
       const expires = Date.now() + maxAge;
       const data = JSON.stringify(sess);
       if (driver() === 'sqlite') {
@@ -60,7 +75,19 @@ class DbSessionStore extends session.Store {
   }
 
   async touch(sid, sess, cb) {
-    return this.set(sid, sess, cb);
+    // Rolling expiry only — avoid rewriting the full session blob on every request.
+    try {
+      const maxAge = sess && sess.cookie && Number(sess.cookie.maxAge) > 0
+        ? Number(sess.cookie.maxAge)
+        : (sess && sess.cookie && Number(sess.cookie.originalMaxAge) > 0
+          ? Number(sess.cookie.originalMaxAge)
+          : 14 * 24 * 60 * 60 * 1000);
+      const expires = Date.now() + maxAge;
+      await query('UPDATE sessions SET expires = :expires WHERE session_id = :sid', { sid, expires });
+      cb && cb(null);
+    } catch (e) {
+      cb && cb(e);
+    }
   }
 }
 

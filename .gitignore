@@ -11,3 +11,6 @@ data/
 *.tgz
 deploy.tgz
 *.lnk
+
+# Required locked dependency; preserve its exact published bytes.
+!vendor/xlsx-0.20.3.tgz

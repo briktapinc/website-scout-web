@@ -14,7 +14,10 @@
 //        design.get, design.ask, design.answers, design.deliver, design.emailQuestions,
 //        design.images, design.generateImage, design.openPreview, design.previewUrl, design.review, design.redesign,
 //        design.improve, design.emailRedesign, design.lessons, design.agentTrigger,
-//        email.compose, email.send, prospect.score, analytics.get, automation.pause
+//        email.compose, email.draft, email.uploadAsset, email.send, sms.queue,
+//        design.generateLogo, website.setLogo, website.setTheme, website.replaceImage,
+//        website.optimizeImages,
+//        prospect.score, analytics.get, automation.pause
 // Resource: website-scout://design/pending (same summary as design.pending)
 
 const fs = require('fs');
@@ -647,7 +650,7 @@ const TOOLS = {
       properties: {
         type: { type: 'string', maxLength: 40 },
         title: { type: 'string', maxLength: 200 },
-        instructions: { type: 'string', maxLength: 8000 },
+        instructions: { type: 'string', maxLength: 20000 },
         leadId: { type: 'integer', minimum: 1 },
         contactEmail: { type: 'string', maxLength: 254 },
         site_shape: { type: 'string', enum: ['landing', 'multipage'] },
@@ -659,7 +662,7 @@ const TOOLS = {
       const design = require('./designJobs');
       const type = vStr(args.type, { max: 40, def: '' });
       const title = vStr(args.title, { max: 200, def: '' });
-      const instructions = vStr(args.instructions, { max: 8000, def: '' });
+      const instructions = vStr(args.instructions, { max: 20000, def: '' });
       if (isErr(type) || !String(type).trim()) throw argError('type is required.');
       if (isErr(title) || !String(title).trim()) throw argError('title is required.');
       if (isErr(instructions) || !String(instructions).trim()) throw argError('instructions are required.');
@@ -715,11 +718,12 @@ const TOOLS = {
       const engine = require('./websiteEngine');
       const pages = safeJson(site.pages, []);
       const theme = safeJson(site.theme, {});
+      const images = engine.imagesForWebsite(db, id);
       // Also keep legacy previews/ under the DB dir for backwards compatibility.
       const legacyDir = path.join(path.dirname(DB_PATH), 'previews', `site-${id}`);
-      engine.writeStaticPages(pages, theme, legacyDir);
+      engine.writeStaticPages(pages, theme, legacyDir, { images });
       db.prepare("UPDATE websites SET preview_path = ?, updated_at = datetime('now') WHERE id = ?").run(legacyDir, id);
-      const preview = await openPreviewMod.previewUrlForPages(pages, theme, `site-${id}`);
+      const preview = await openPreviewMod.previewUrlForPages(pages, theme, `site-${id}`, { images });
       return {
         ok: true,
         data: {
@@ -875,13 +879,13 @@ const TOOLS = {
   },
 
   'design.emailQuestions': {
-    description: 'Queue the unanswered questions for one design job. Does not send mail.',
+    description: 'Email the unanswered questions for one design job via workspace SMTP.',
     schema: { type: 'object', properties: {}, required: [] },
-    run(args) {
+    async run(args) {
       const design = require('./designJobs');
       const raw = args.jobId != null ? args.jobId : args.id;
       const jobId = requireId(raw, 'jobId');
-      const result = design.emailQuestions(db, jobId);
+      const result = await design.emailQuestions(db, jobId);
       return { ok: true, data: result };
     },
   },
@@ -895,7 +899,13 @@ const TOOLS = {
       if (!args.payload || typeof args.payload !== 'object' || Array.isArray(args.payload)) {
         throw argError('payload must be an object.');
       }
-      const job = design.deliverJob(db, id, args.payload, args.claims, {
+      let payload = args.payload;
+      try {
+        payload = await design.localizePayloadRemoteImages(id, payload);
+      } catch (e) {
+        console.warn('[mcp] localizePayloadRemoteImages:', e.message || e);
+      }
+      const job = await design.deliverJob(db, id, payload, args.claims, {
         site_shape: args.site_shape != null ? args.site_shape : args.siteShape,
       });
       const data = {
@@ -906,6 +916,11 @@ const TOOLS = {
         built_by: job.built_by,
         site_shape: job.site_shape,
       };
+      if (job.change_verification) data.change_verification = job.change_verification;
+      if (job.change_summary) data.change_summary = job.change_summary;
+      if (job.brief && job.brief.change_request_review) {
+        data.change_request_review = job.brief.change_request_review;
+      }
       if (job.type === 'website') {
         try {
           const preview = await design.previewUrl(db, id, { open: false });
@@ -918,7 +933,7 @@ const TOOLS = {
   },
 
   'design.images': {
-    description: 'Attach Pexels photos to a delivered website.',
+    description: 'Search Pexels, store photos in app export storage, attach local images/… paths (no CDN hotlinks).',
     schema: { type: 'object', properties: {}, required: ['id'] },
     async run(args) {
       ensureNotPaused();
@@ -1330,41 +1345,101 @@ const TOOLS = {
   },
 
   'email.compose': {
-    description: 'Compose a queued outreach message for a lead from a template (supports {{placeholders}}).',
+    description: 'Compose from a dual-channel template. Pass channel email|sms. queue:true persists and returns messageId for email.send.',
     schema: {
       type: 'object',
       properties: {
         leadId: { type: 'integer', minimum: 1 },
         templateId: { type: 'integer', minimum: 1 },
+        channel: { type: 'string', enum: ['email', 'sms'] },
+        queue: { type: 'boolean' },
       },
       required: ['leadId', 'templateId'],
     },
     run(args) {
+      const outreach = require('./outreach');
+      const email = require('./email');
+      const sms = require('./sms');
+      outreach.ensureTables(db);
       const leadId = requireId(args.leadId, 'leadId');
       const templateId = requireId(args.templateId, 'templateId');
+      const queue = args.queue !== false; // default true for desktop parity with prior behavior
+      if (queue) ensureNotPaused();
+      const template = db.prepare('SELECT * FROM email_templates WHERE id = ?').get(templateId);
+      if (!template) throw argError(`Template ${templateId} not found.`);
+      let channel = String(args.channel || '').toLowerCase() === 'sms' ? 'sms' : 'email';
+      if (!args.channel && String(template.channel || '').toLowerCase() === 'sms' && !outreach.templateHasEmail(template)) {
+        channel = 'sms';
+      }
+      if (channel === 'sms' && !outreach.templateHasSms(template)) throw argError('This template has no SMS body');
+      if (channel === 'email' && !outreach.templateHasEmail(template)) throw argError('This template has no email body');
       const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(leadId);
       if (!lead) throw argError(`Lead ${leadId} not found.`);
-      if (!lead.email) throw argError(`Lead ${leadId} has no email address.`);
-      const tpl = db.prepare('SELECT * FROM email_templates WHERE id = ?').get(templateId);
-      if (!tpl) throw argError(`Template ${templateId} not found.`);
-      const footer = getSetting('mail.footer') || '';
-      const vars = {
-        business_name: lead.business_name || '', name: lead.business_name || '',
-        first_name: String(lead.business_name || '').split(' ')[0],
-        email: lead.email || '', phone: lead.phone || '',
-        city: lead.city || '', category: lead.category || '',
-      };
-      const render = (t) => String(t).replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_, k) => (vars[k.toLowerCase()] ?? ''));
-      const subject = render(tpl.subject);
-      const body = render(tpl.body) + (footer ? `\n\n--\n${footer}` : '');
-      let campaign = db.prepare("SELECT id FROM campaigns WHERE name = ? AND status = 'draft'").get('MCP compose');
-      if (!campaign) {
-        campaign = { id: db.prepare('INSERT INTO campaigns (name, template_id, status) VALUES (?, ?, ?)').run('MCP compose', templateId, 'draft').lastInsertRowid };
+      const facts = db.prepare('SELECT * FROM business_facts WHERE lead_id = ?').all(leadId);
+      const fromName = getSetting('smtp.from_name') || getSetting('app.name') || '';
+      const source = channel === 'sms'
+        ? { subject: '(SMS)', body: outreach.templateSmsText(template) }
+        : { subject: template.subject, body: template.body };
+      const personalized = email.personalize(
+        source, lead, facts,
+        outreach.personalizeExtras(db, leadId, fromName, {})
+      );
+      if (channel === 'sms') {
+        personalized.body = sms.plainSmsBody(personalized.body);
+        personalized.subject = personalized.subject || '(SMS)';
       }
+      if (!queue) {
+        return {
+          ok: true,
+          data: {
+            ...personalized,
+            channel,
+            sms_body: outreach.templateSmsText(template) || null,
+            to_phone: channel === 'sms' ? outreach.normalizePhone(lead.phone) || null : null,
+            queued: false,
+          },
+        };
+      }
+      const campaignName = channel === 'sms' ? 'Compose SMS' : 'MCP compose';
+      let campaign = db.prepare("SELECT id FROM campaigns WHERE name = ? AND status = 'draft'").get(campaignName);
+      if (!campaign) {
+        campaign = {
+          id: db.prepare('INSERT INTO campaigns (name, template_id, status) VALUES (?, ?, ?)')
+            .run(campaignName, templateId, 'draft').lastInsertRowid,
+        };
+      }
+      if (channel === 'sms') {
+        const phone = outreach.normalizePhone(lead.phone);
+        if (!phone) throw argError(`Lead ${leadId} has no phone number for SMS.`);
+        const body = sms.plainSmsBody(personalized.body);
+        const r = db.prepare(
+          `INSERT INTO campaign_messages
+             (campaign_id, lead_id, to_email, subject, body, status, channel, to_phone)
+           VALUES (?, ?, ?, ?, ?, 'queued', 'sms', ?)`
+        ).run(Number(campaign.id), leadId, phone, personalized.subject || '(SMS)', body, phone);
+        return {
+          ok: true,
+          data: {
+            messageId: Number(r.lastInsertRowid), to: phone, to_phone: phone,
+            subject: personalized.subject, body, channel: 'sms', queued: true,
+          },
+        };
+      }
+      if (!lead.email) throw argError(`Lead ${leadId} has no email address.`);
+      const footer = getSetting('mail.footer') || '';
+      const body = personalized.body + (footer ? `\n\n--\n${footer}` : '');
       const r = db.prepare(
-        'INSERT INTO campaign_messages (campaign_id, lead_id, to_email, subject, body, status) VALUES (?, ?, ?, ?, ?, ?)'
-      ).run(Number(campaign.id), leadId, lead.email, subject, body, 'queued');
-      return { ok: true, data: { messageId: Number(r.lastInsertRowid), to: lead.email, subject } };
+        `INSERT INTO campaign_messages
+           (campaign_id, lead_id, to_email, subject, body, status, channel)
+         VALUES (?, ?, ?, ?, ?, 'queued', 'email')`
+      ).run(Number(campaign.id), leadId, lead.email, personalized.subject, body);
+      return {
+        ok: true,
+        data: {
+          messageId: Number(r.lastInsertRowid), to: lead.email,
+          subject: personalized.subject, body, channel: 'email', queued: true,
+        },
+      };
     },
   },
 

@@ -205,7 +205,8 @@ function validatePatch(patch = {}) {
   }
   if (patch.category !== undefined) {
     const c = String(patch.category || '').trim();
-    if (!c || c.length > 200) throw new Error('category is required (max 200 chars)');
+    // "*" / "any" = no niche filter (search local businesses broadly).
+    if (!c || c.length > 200) throw new Error('category is required (max 200 chars); use * for any');
     out.category = c;
   }
   if (patch.location !== undefined) {

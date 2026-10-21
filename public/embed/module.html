@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Site module</title>
+  <style>
+    :root {
+      --ink: #1c140f;
+      --muted: #5c5148;
+      --line: rgba(28, 20, 15, 0.12);
+      --paper: #fffaf4;
+      --accent: #0e7a68;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      color: var(--ink);
+      background: #f4efe6;
+      min-height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <div
+    class="bitpype-module-embed bitpype-module-standalone"
+    data-bitpype-module="1"
+    data-bitpype-module-token=""
+    data-bitpype-show-title="1"
+    id="app"
+  ></div>
+  <script>
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var token = params.get('token') || '';
+      var item = params.get('slug') || params.get('item') || '';
+      var el = document.getElementById('app');
+      if (el) {
+        el.setAttribute('data-bitpype-module-token', token);
+        el.setAttribute('data-bitpype-api', location.origin);
+      }
+      if (item && !new URLSearchParams(location.search).get('bpItem')) {
+        var u = new URL(location.href);
+        u.searchParams.set('bpItem', item);
+        history.replaceState(null, '', u.pathname + '?' + u.searchParams.toString());
+      }
+    })();
+  </script>
+  <script src="/js/module-embed.js?v=mod1" data-bitpype-module-script="1"></script>
+</body>
+</html>

@@ -18,7 +18,7 @@ const SETTING_SEEDS = [
   ['ai.model.qa', ''],
   ['ai.model.editor', ''],
   ['ai.model.followup', ''],
-  ['ai.model.image', 'gpt-image-1'],
+  ['ai.model.image', 'gpt-image-2.5-sunburst'],
   ['ai.model.vision', ''],
   // Cost controls
   ['cost.daily_budget_usd', '10'],
@@ -45,12 +45,12 @@ const SETTING_SEEDS = [
   ['discovery.schedule.interval_hours', '6'],
   ['discovery.schedule.daily_time', '09:00'],
   ['discovery.schedule.provider', 'tavily'],
-  ['discovery.schedule.category', 'Plumber'],
-  ['discovery.schedule.location', 'Springfield'],
+  ['discovery.schedule.category', '*'],
+  ['discovery.schedule.location', '19510'],
   ['discovery.schedule.limit', '8'],
   ['discovery.schedule.score', '1'],
   ['discovery.schedule.group', ''],
-  ['discovery.schedule.website_presence', ''],
+  ['discovery.schedule.website_presence', 'no'],
   ['discovery.schedule.last_run', ''],
   ['discovery.schedule.next_run', ''],
   ['discovery.schedule.last_status', ''],
@@ -58,17 +58,20 @@ const SETTING_SEEDS = [
   ['discovery.schedule.last_result', ''],
   // Tavily discovery (API key is a secret; depth is a regular setting)
   ['providers.tavily.search_depth', 'advanced'],
-  // SMTP / mail
-  ['smtp.host', ''],
+  // SMTP / mail (credentials come from platform seed / secrets; not baked into git)
+  ['smtp.host', 'in-v3.mailjet.com'],
   ['smtp.port', '587'],
   ['smtp.secure', '0'],
   ['smtp.user', ''],
   ['smtp.pass', ''],
-  ['smtp.from_name', 'Website Scout'],
-  ['smtp.from_email', ''],
+  ['smtp.from_name', 'Bitpype'],
+  ['smtp.from_email', 'team@bitpype.com'],
+  ['meta.app_id', ''],
+  ['meta.app_secret', ''],
+  ['social.image_price_usd', '1'],
   ['mail.footer', 'Reply STOP to opt out of future messages.'],
   ['mail.inbound_drop_dir', ''],
-  ['mail.imap.enabled', '0'],
+  ['mail.imap.enabled', '1'],
   ['mail.imap.host', ''],
   ['mail.imap.port', '993'],
   ['mail.imap.secure', '1'],
@@ -76,16 +79,24 @@ const SETTING_SEEDS = [
   ['mail.imap.pass', ''],
   ['mail.imap.mailbox', 'INBOX'],
   ['mail.imap.auto_submit', '1'],
+  // SMS / Twilio (platform Admin → SMS can seed these; stub-send when disabled)
+  ['sms.enabled', '0'],
+  ['sms.provider', 'twilio'],
+  ['sms.account_sid', ''],
+  ['sms.auth_token', ''],
+  ['sms.api_key', ''],
+  ['sms.from_number', ''],
+  ['sms.webhook_url', ''],
   // Scoring
   ['score.threshold_qualified', '50'],
   ['score.threshold_hot', '70'],
   // App
-  ['app.name', 'Website Scout'],
+  ['app.name', 'Bitpype'],
   // Cloudflare Pages publishing (optional)
   ['cf.api_token', ''],
-  ['cf.account_id', ''],
+  ['cf.account_id', '2b529c9c689b4e139de72bba42d7148b'],
   ['cf.project', ''],
-  ['cf.preview_domain', ''],
+  ['cf.preview_domain', 'briktapinc.workers.dev'],
 ];
 
 // Settings keys that settings:set is allowed to write (validated in ipc/system.js).
@@ -167,16 +178,19 @@ Checks:
 
 Recipient: {{owner_name}} at {{business_name}} ({{category}}, {{city}}, {{state}})
 What we noticed: {{observation}}
-Offer: a done-for-you AI-built website, preview link: {{preview_url}}
+Offer: a done-for-you AI-built website, preview link: {{website_link}} (alias {{preview_url}})
+Response links (become clickable when sent): {{interested}} and {{uninterested}}
 Sender: {{from_name}}
 
-Task: write the email as JSON: { "subject": "...", "body": "..." }.
+Task: write dual-channel outreach as JSON: { "subject": "...", "body": "...", "sms_body": "..." }.
 Rules:
-- Under 120 words. Plain, human tone — no hype, no emojis.
+- Under 120 words for email. Plain, human tone — no hype, no emojis. Simple HTML (<p>, <b>, <a>) is OK.
 - Reference ONE specific observation about their business or online presence.
-- Include the preview link naturally in the body.
+- Include the website link naturally (use {{website_link}} when writing a reusable template).
+- Optionally offer a clear choice with {{interested}} and {{uninterested}} (they expand to signed tracking links on email).
+- Also write sms_body: concise plain-text SMS (ideal ≤160 chars, hard max 280) that MUST include {{website_link}} (or the concrete URL). No HTML in sms_body.
 - Do NOT invent facts about their business. Only use the observation provided.
-- End with the mail footer: {{mail_footer}}`,
+- End the email body with the mail footer: {{mail_footer}}`,
   },
   {
     key: 'follow_up',

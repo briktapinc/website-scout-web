@@ -1,0 +1,45 @@
+'use strict';
+const assert=require('node:assert/strict'),Database=require('better-sqlite3'),fs=require('fs'),os=require('os'),path=require('path');
+const a=require('../server/siteAnalytics');let groups=0;
+function check(fn){fn();groups++}
+const db=new Database(':memory:');db.exec(`CREATE TABLE websites(id INTEGER PRIMARY KEY,lead_id INTEGER,pages TEXT,preview_url TEXT);
+ CREATE TABLE site_domains(website_id INTEGER,domain_name TEXT,public_url TEXT,status TEXT);`);
+const pages=JSON.stringify([{slug:'/',title:'Home',sections:[]},{slug:'contact',title:'Contact',sections:[]}]);
+db.prepare('INSERT INTO websites VALUES(1,10,?,?)').run(pages,'https://abc.bp-w7-s1.pages.dev/');
+db.prepare('INSERT INTO websites VALUES(2,20,?,?)').run(pages,'https://other.example/');
+const origin='https://abc.bp-w7-s1.pages.dev';
+check(()=>assert.deepEqual(a.settings(db,10).googleIds,[]));
+check(()=>assert.equal(a.settings(db,10).internalEnabled,false));
+check(()=>assert.deepEqual(a.googleIds(' g-ABC1234567, GT-ABCDEF12,G-ABC1234567 '),['G-ABC1234567','GT-ABCDEF12']));
+check(()=>{for(const bad of ['GTM-ABC12345','UA-123456-1','<script>','G-123456\" onload=x'])assert.throws(()=>a.googleIds(bad),/Google tag IDs/)});
+check(()=>assert.throws(()=>a.googleIds(['G-ABCDEF01','G-ABCDEF02','G-ABCDEF03','G-ABCDEF04'])));
+check(()=>assert.throws(()=>a.save(db,7,10,{internalEnabled:'true',googleIds:[]})));
+a.save(db,7,10,{internalEnabled:true,googleIds:['G-ABC1234567'],siteId:2,leadId:20});
+const token=db.prepare('SELECT token FROM site_analytics_settings WHERE website_id=1').get().token;
+check(()=>{assert.match(token,/^7_[a-f0-9]{48}$/);assert.equal(a.settings(db,20).internalEnabled,false)});
+check(()=>{a.save(db,7,10,{internalEnabled:true,googleIds:[]});assert.equal(db.prepare('SELECT token FROM site_analytics_settings WHERE website_id=1').get().token,token)});
+check(()=>assert(a.config(db,token,origin).internalEnabled));
+check(()=>{for(const bad of ['null','https://evil.example','https://abc.bp-w7-s1.pages.dev.evil.example','http://abc.bp-w7-s1.pages.dev',undefined])assert.equal(a.config(db,token,bad),null)});
+check(()=>{assert(a.config(db,token,'https://bp-w7-s1.pages.dev'));assert(a.config(db,token,'https://old.bp-w7-s1.pages.dev'))});
+check(()=>{db.prepare('INSERT INTO site_domains VALUES(1,?,?,?)').run('linked.example','https://linked.example/','linked');assert(a.config(db,token,'https://linked.example'));db.prepare("UPDATE site_domains SET status='unlinked'").run();assert.equal(a.config(db,token,'https://linked.example'),null)});
+check(()=>assert.equal(a.config(db,'7_'+'a'.repeat(48),origin),null));
+check(()=>assert.equal(a.collect(db,token,'https://evil.example',{event:'pageview',path:'/'}),false));
+check(()=>assert.throws(()=>a.collect(db,token,origin,{event:'pageview',path:'/',consent:false})));
+check(()=>assert.throws(()=>a.collect(db,token,origin,{event:'pageview',path:'/?email=secret',consent:true})));
+check(()=>assert.throws(()=>a.collect(db,token,origin,{event:'click',kind:'pageview',path:'/',consent:true})));
+check(()=>{a.collect(db,token,origin,{event:'pageview',path:'/',consent:true,email:'must-not-store@example.invalid'});a.collect(db,token,origin,{event:'click',kind:'phone',path:'/index.html',consent:true});a.collect(db,token,origin,{event:'pageview',path:'/contact.html',consent:true});const r=a.report(db,10,7);assert.equal(r.visits,2);assert.equal(r.clicks,1);assert.equal(r.clickTypes[0].kind,'phone')});
+check(()=>assert.equal(a.report(db,20,7).visits,0));
+check(()=>assert.throws(()=>a.report(db,10,999)));
+check(()=>{db.prepare("INSERT INTO site_analytics_daily VALUES(1,date('now','-100 days'),'/index.html','pageview',100)").run();assert.equal(a.report(db,10,90).visits,2);assert.equal(db.prepare("SELECT COUNT(*) n FROM site_analytics_daily WHERE day<date('now','-89 days')").get().n,0)});
+check(()=>{a.save(db,7,10,{internalEnabled:false,googleIds:[]});a.collect(db,token,origin,{event:'pageview',path:'/',consent:true});assert.equal(a.report(db,10,30).visits,2)});
+check(()=>{const other=new Database(':memory:');assert.equal(a.lookup(other,token),null);other.close()});
+check(()=>{const schema=db.prepare('PRAGMA table_info(site_analytics_daily)').all().map(x=>x.name);assert.deepEqual(schema,['website_id','day','path','kind','count']);assert(!JSON.stringify(db.prepare('SELECT * FROM site_analytics_daily').all()).includes('must-not-store'))});
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'bp-analytics-'));
+try{
+ fs.writeFileSync(path.join(dir,'index.html'),'<!doctype html><body><h1>Fixture</h1><!-- bitpype-cookie-bar --><script src="cookie-bar.js"></script><!-- /bitpype-cookie-bar --></body>');
+ check(()=>{a.inject(db,1,dir);assert(!fs.readFileSync(path.join(dir,'index.html'),'utf8').includes('site-analytics.js'))});
+ a.save(db,7,10,{internalEnabled:true,googleIds:['G-ABC1234567']});
+ check(()=>{a.inject(db,1,dir);a.inject(db,1,dir);const h=fs.readFileSync(path.join(dir,'index.html'),'utf8');assert.equal((h.match(/site-analytics\.js/g)||[]).length,1);assert(!h.includes('cookie-bar.js'));assert(h.includes(token));assert(h.includes('<h1>Fixture</h1>'))});
+ check(()=>{a.save(db,7,10,{internalEnabled:false,googleIds:[]});a.inject(db,1,dir);assert(!fs.readFileSync(path.join(dir,'index.html'),'utf8').includes('site-analytics.js'))});
+}finally{fs.rmSync(dir,{recursive:true,force:true});db.close()}
+console.log(JSON.stringify({passed:true,groups,checks:['tag validation','tenant/lead boundaries','origin restrictions','opt-in','aggregation','bounded paths','90-day report pruning','no raw visitor fields','idempotent export injection','disable switch']}));

@@ -204,8 +204,7 @@ async function reviewDesignJob(db, jobId, opts = {}) {
   let aiUsed = false;
   let visionUsed = false;
 
-  ai.setDb(db);
-  if (opts.skipAi !== true && ai.aiConfigured()) {
+  if (opts.skipAi !== true && ai.aiConfigured(db)) {
     try {
       const brief = job.brief || {};
       const facts = (brief.verified_facts || []).slice(0, 40)
@@ -231,6 +230,7 @@ async function reviewDesignJob(db, jobId, opts = {}) {
       visionUsed = capture.available && Array.isArray(userContent);
       const { text } = await ai.chat({
         task: 'qa',
+        db,
         messages: [
           { role: 'system', content: REVIEW_SYSTEM },
           { role: 'user', content: userContent },
@@ -385,6 +385,45 @@ async function requestAgentChange(db, jobId, opts = {}) {
     throw fail('NO_INSTRUCTIONS', `No ${which} instructions available. Run a review first.`);
   }
 
+  // Instruction-review layer: inspect live site, classify, plan before agent runs.
+  let changeReview = null;
+  try {
+    const crr = require('./changeRequestReview');
+    changeReview = crr.reviewChangeRequest(db, {
+      leadId: row.lead_id,
+      message: changeText,
+      kind,
+      source: opts.source || (override ? 'client_or_operator' : 'review'),
+      jobId,
+    });
+  } catch (e) {
+    console.warn('[designReview] changeRequestReview failed:', e && e.message);
+  }
+
+  // Persist arrived/override text on the review object so Design detail textareas
+  // (improvement / redesign instructions) show what the client or operator sent —
+  // not only AI review suggestions.
+  const storedChange = changeText.slice(0, 6000);
+  if (override) {
+    if (!review || typeof review !== 'object') {
+      review = {
+        at: new Date().toISOString(),
+        pass: null,
+        summary: `Queued ${kind} from client/operator instructions.`,
+        issues: [],
+        redesign_instructions: '',
+        improvement_instructions: '',
+      };
+    } else {
+      review = { ...review };
+    }
+    if (kind === 'improvements') {
+      review.improvement_instructions = storedChange;
+    } else {
+      review.redesign_instructions = storedChange;
+    }
+  }
+
   const prior = String(row.instructions || '').trim();
   const shotNote = review && review.screenshots && review.screenshots.length
     ? `\n(Visual review used ${review.screenshots.length} screenshot(s).)`
@@ -392,13 +431,17 @@ async function requestAgentChange(db, jobId, opts = {}) {
   const scopeNote = kind === 'improvements'
     ? '\nScope: incremental polish only (copy, CTA, mobile sizing, imagery). Do not treat this as a full redesign.'
     : '\nScope: fuller visual/IA rethink. Prior deliverable remains for reference — revise and design.deliver again.';
+  const reviewBlock = changeReview
+    ? require('./changeRequestReview').formatReviewForInstructions(changeReview)
+    : '';
   const merged = [
     instructionHeader(kind),
     changeText.slice(0, 5000) + shotNote + scopeNote,
+    reviewBlock ? `\n${reviewBlock}` : '',
     '',
     '=== ORIGINAL INSTRUCTIONS (context) ===',
-    prior.slice(0, 2500),
-  ].join('\n').slice(0, 8000);
+    prior.slice(0, 12000),
+  ].filter((x) => x !== '').join('\n').slice(0, 20000);
 
   const siteShape = design.normalizeSiteShape(row.site_shape)
     || (row.site_shape === 'landing' || row.site_shape === 'multipage' ? row.site_shape : null);
@@ -415,10 +458,15 @@ async function requestAgentChange(db, jobId, opts = {}) {
       siteShape: siteShape || undefined,
     });
   } catch { /* learning optional */ }
+  if (changeReview) {
+    require('./changeRequestReview').attachReviewToBrief(brief, changeReview);
+  }
   const changeMeta = {
     at: new Date().toISOString(),
     kind,
     from_status: row.status,
+    classification: changeReview ? changeReview.classification : null,
+    clientMessage: changeReview ? changeReview.clientMessage : null,
     note: kind === 'improvements'
       ? 'Prior deliverable is still on the job — apply incremental polish and design.deliver again.'
       : 'Prior deliverable is still on the job — revise (fuller rethink) and design.deliver again.',
@@ -476,6 +524,8 @@ module.exports = {
   REQUEST_KINDS,
   normalizeRequestKind,
   reviewDesignJob,
+  /** Alias used by some callers (domain / MCP) — same as reviewDesignJob. */
+  reviewJob: reviewDesignJob,
   requestAgentChange,
   requestRedesign,
   requestImprovements,

@@ -8,6 +8,10 @@ const SECRET_KEYS = [
   'pexels.api_key',
   'providers.tavily.api_key',
   'fal.api_key',
+  'meta.app_secret',
+  'design.agent_webhook_secret',
+  'sms.auth_token',
+  'sms.api_key',
 ];
 
 const SETTING_SEEDS = [
@@ -21,7 +25,7 @@ const SETTING_SEEDS = [
   ['ai.model.qa', ''],
   ['ai.model.editor', ''],
   ['ai.model.followup', ''],
-  ['ai.model.image', 'gpt-image-1'],
+  ['ai.model.image', 'gpt-image-2.5-sunburst'],
   ['ai.model.vision', ''],
   ['cost.daily_budget_usd', '10'],
   ['cost.max_websites_per_day', '25'],
@@ -36,15 +40,15 @@ const SETTING_SEEDS = [
   ['design.agent_webhook_secret', ''],
   ['design.learning.enabled', '1'],
   ['providers.tavily.search_depth', 'advanced'],
-  ['smtp.host', ''],
+  ['smtp.host', 'in-v3.mailjet.com'],
   ['smtp.port', '587'],
   ['smtp.secure', '0'],
   ['smtp.user', ''],
-  ['smtp.from_name', 'Website Scout'],
-  ['smtp.from_email', ''],
+  ['smtp.from_name', 'Bitpype'],
+  ['smtp.from_email', 'team@bitpype.com'],
   ['mail.footer', 'Reply STOP to opt out of future messages.'],
   ['mail.inbound_drop_dir', ''],
-  ['mail.imap.enabled', '0'],
+  ['mail.imap.enabled', '1'],
   ['mail.imap.host', ''],
   ['mail.imap.port', '993'],
   ['mail.imap.secure', '1'],
@@ -54,12 +58,21 @@ const SETTING_SEEDS = [
   ['mail.imap.auto_submit', '1'],
   ['score.threshold_qualified', '50'],
   ['score.threshold_hot', '70'],
-  ['app.name', 'Website Scout'],
+  ['app.name', 'Bitpype'],
   ['cf.account_id', ''],
   ['cf.project', ''],
   ['cf.preview_domain', ''],
+  ['meta.app_id', ''],
+  ['meta.app_secret', ''],
+  ['social.image_price_usd', '1'],
+  ['hands_off.enabled', '0'],
+  ['hands_off.min_score', '50'],
+  ['hands_off.max_sites_per_day', '5'],
+  ['hands_off.report_email', ''],
+  ['hands_off.followup_days', '3'],
+  ['hands_off.template_id', ''],
+  ['hands_off.channel', 'both'],
 ];
-
 const SETTABLE_KEYS = SETTING_SEEDS
   .map(([k]) => k)
   .filter((k) => !SECRET_KEYS.includes(k) && k !== 'automation_paused');

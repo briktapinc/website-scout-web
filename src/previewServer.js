@@ -119,7 +119,7 @@ function handle(req, res) {
         .sort()
         .map((name) => `<li><a href="/${encodeURIComponent(name)}/">${name}</a></li>`)
         .join('\n');
-      const html = `<!doctype html><meta charset="utf-8"><title>Website Scout previews</title>
+      const html = `<!doctype html><meta charset="utf-8"><title>Bitpype previews</title>
 <h1>Exported previews</h1><ul>${listing || '<li>(empty)</li>'}</ul>`;
       send(res, 200, { 'Content-Type': 'text/html; charset=utf-8' }, req.method === 'HEAD' ? '' : html);
       return;

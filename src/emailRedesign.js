@@ -512,12 +512,29 @@ async function submitEmailRedesign(db, id, opts = {}) {
   if (!instructions) instructions = String(row.body || '').trim();
   if (!instructions) throw fail('NO_INSTRUCTIONS', 'Instructions are empty.');
 
+  // Pre-classify against live site (also re-run inside requestAgentChange).
+  let changeReview = null;
+  try {
+    const crr = require('./changeRequestReview');
+    changeReview = crr.reviewChangeRequest(db, {
+      leadId: job.lead_id,
+      message: instructions,
+      kind,
+      source: row.source || 'email',
+      jobId,
+    });
+    crr.persistReviewOnEmailRequest(db, row.id, changeReview);
+  } catch (e) {
+    console.warn('[emailRedesign] changeRequestReview:', e && e.message);
+  }
+
   const design = require('./designJobs');
   const queueOpts = {
     instructions,
     refresh: false,
     skipAi: true,
     skipScreenshots: true,
+    source: row.source || 'email',
   };
   const updated = kind === 'improvements'
     ? await design.improveJob(db, jobId, queueOpts)
@@ -557,6 +574,14 @@ async function submitEmailRedesign(db, id, opts = {}) {
     job: updated,
     instructions,
     interpreted: interpretMeta,
+    change_request_review: changeReview
+      ? {
+        classification: changeReview.classification,
+        plan: changeReview.plan,
+        clientMessage: changeReview.clientMessage,
+        log: changeReview.log,
+      }
+      : (updated && updated.brief && updated.brief.change_request_review) || null,
   };
 }
 

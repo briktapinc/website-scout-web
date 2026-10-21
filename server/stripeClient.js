@@ -2,6 +2,7 @@
 
 const Stripe = require('stripe');
 const platform = require('./platform');
+const { PLAN_STANDARD, PLAN_PREMIUM, normalizePlanId } = require('./plans');
 
 let cached = { key: null, client: null };
 
@@ -31,9 +32,52 @@ async function getWebhookSecret() {
     || (await platform.getPlatformSetting('stripe.webhook_secret', ''));
 }
 
+async function getPublishableKey() {
+  return process.env.STRIPE_PUBLISHABLE_KEY
+    || (await platform.getPlatformSetting('stripe.publishable_key', ''));
+}
+
+/** @deprecated Prefer getPriceIdForPlan — kept for one-price legacy installs. */
 async function getPriceId() {
-  return process.env.STRIPE_PRICE_ID
-    || (await platform.getPlatformSetting('stripe.price_id', ''));
+  return getPriceIdForPlan(PLAN_STANDARD);
+}
+
+/**
+ * Resolve Stripe Price ID for a paid plan.
+ * Env: STRIPE_PRICE_ID_STANDARD / STRIPE_PRICE_ID_PREMIUM
+ * Legacy: STRIPE_PRICE_ID or stripe.price_id maps to Standard.
+ */
+async function getPriceIdForPlan(planId) {
+  const plan = normalizePlanId(planId);
+  if (plan === PLAN_PREMIUM) {
+    const fromEnv = process.env.STRIPE_PRICE_ID_PREMIUM || '';
+    if (fromEnv) return String(fromEnv).trim();
+    return String(await platform.getPlatformSetting('stripe.price_id_premium', '') || '').trim();
+  }
+  if (plan === PLAN_STANDARD) {
+    const fromEnv = process.env.STRIPE_PRICE_ID_STANDARD || process.env.STRIPE_PRICE_ID || '';
+    if (fromEnv) return String(fromEnv).trim();
+    const dedicated = String(await platform.getPlatformSetting('stripe.price_id_standard', '') || '').trim();
+    if (dedicated) return dedicated;
+    return String(await platform.getPlatformSetting('stripe.price_id', '') || '').trim();
+  }
+  return '';
+}
+
+async function getConfiguredPriceIds() {
+  const standard = await getPriceIdForPlan(PLAN_STANDARD);
+  const premium = await getPriceIdForPlan(PLAN_PREMIUM);
+  return { standard, premium };
+}
+
+/** Map a Stripe price_… id back to a plan tier. */
+async function planIdFromPriceId(priceId) {
+  const pid = String(priceId || '').trim();
+  if (!pid) return null;
+  const { standard, premium } = await getConfiguredPriceIds();
+  if (premium && pid === premium) return PLAN_PREMIUM;
+  if (standard && pid === standard) return PLAN_STANDARD;
+  return null;
 }
 
 function appUrl() {
@@ -57,7 +101,11 @@ function integrationId(label = 'billing-checkout') {
 module.exports = {
   getStripe,
   getWebhookSecret,
+  getPublishableKey,
   getPriceId,
+  getPriceIdForPlan,
+  getConfiguredPriceIds,
+  planIdFromPriceId,
   getSecretKey,
   appUrl,
   integrationId,

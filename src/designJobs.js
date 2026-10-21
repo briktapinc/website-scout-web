@@ -5,6 +5,8 @@
 // Website deliveries are rendered from the agent's pages. They are not passed
 // through the prompt library or industry templates.
 
+const crypto = require('crypto');
+const path = require('path');
 const engine = require('./websiteEngine');
 const pexels = require('./pexels');
 const {
@@ -88,16 +90,27 @@ function resolveSiteShape(row, brief) {
 }
 
 function websiteShapeConstraints(siteShape) {
+  const modularRules = [
+    'MODULAR CONTENT + 100% FREESTYLE VISUALS: every page uses pages[].sections (typed blocks). Do NOT ship freeform page.html as the page body. Structure is modular for editing; the LOOK is entirely yours.',
+    'NAV FIRST: every page.sections[0] MUST be type "nav". Never put hero/banner/content above nav.',
+    'Allowed section types: nav, hero, columns (cols 1–12), text, text_image, cards, heading, image, benefits, services, about, gallery, reviews, cta, faq, contact_form, footer, html, custom, site_module. Nesting: Page → Section → Block; use website.addSection for a section, website.addBlock to place a block in a section or column cell.',
+    'Compose with layout modules (columns / text / text_image / cards). Small html section fragments OK for accents — never a whole-page HTML document.',
+    'SITE MODULES + FORMS: bare mounts (.bitpype-module-embed / .bitpype-form-embed) must be styled too — wrap in a themed card/section and paint with theme.customCss under section[data-ws-section-type="site_module|bitpype_form|contact_form"] and those embed classes.',
+    '100% FREESTYLE — photos, copy, backgrounds, gradients, motion, and JS: invent headlines/subcopy; place photos (content.image / gallery / cards, or content.backgroundImage); use gradients/filters/keyframes in theme.customCss; put interactivity/effects in theme.customJs. Prefer baseCss:false. Target [data-ws-section-type="hero|nav|columns|…"] and className. If the first viewport could belong to another brand after removing the logo, restyle harder.',
+    'Per section: className, style, backgroundImage (https or images/…), backgroundColor, and normal content fields. Keep editable copy in content (headline, body, items, …) so portal/MCP can change text/photos without fighting your CSS/JS.',
+  ];
   if (siteShape === 'landing') {
     return [
       'site_shape is landing: deliver one focused marketing page (single primary page in pages[]). Collapse site_map.recommended_pages into scroll sections (hero, services, areas, FAQ, about, contact) — do not ship a multi-page IA.',
-      'Still reuse research copy/services/FAQ/contact from source_structure / content / site_map; do not invent a new service menu. Prefer page.html + theme.customCss (baseCss:false).',
+      'Still reuse research copy/services/FAQ/contact from source_structure / content / site_map; do not invent a new service menu.',
+      ...modularRules,
     ];
   }
   return [
-    'site_shape is multipage: Payload { name, theme, pages }. Prefer page.html + theme.customCss (baseCss:false). Map source_structure roles/sections onto multipage freeform HTML.',
+    'site_shape is multipage: Payload { name, theme, pages }. Each page is { slug, title, sections: [...] }.',
     'When site_map.recommended_pages is present, deliver that full IA (home, services index, each service page, areas, FAQ, about, contact) — do not stop at a 3–4 page stub.',
     'Use site_map.services / areas for the service menu and service-area coverage. Reuse site_map.faq answers. Geo matrix URLs collapse to one page per service plus one areas page.',
+    ...modularRules,
   ];
 }
 
@@ -156,13 +169,19 @@ function ensureTables(db) {
     }
   };
   addCol('design_jobs', 'contact_email', 'TEXT');
+  addCol('design_jobs', 'contact_phone', 'TEXT');
   addCol('design_jobs', 'questions_emailed_at', 'TEXT');
   addCol('design_jobs', 'delivery_emailed_at', 'TEXT');
   addCol('design_jobs', 'site_shape', 'TEXT');
   addCol('design_jobs', 'review', 'TEXT');
   // Last queued agent change: 'redesign' | 'improvements' (null for fresh assigns).
   addCol('design_jobs', 'request_kind', 'TEXT');
+  // Public client form (no IMAP): stable token for change requests / answers.
+  addCol('design_jobs', 'client_form_token', 'TEXT');
   addCol('design_questions', 'from_email', 'TEXT');
+  try {
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_design_jobs_client_form_token ON design_jobs(client_form_token)');
+  } catch { /* ignore */ }
   try {
     require('./emailRedesign').ensureTables(db);
   } catch { /* optional module */ }
@@ -203,6 +222,8 @@ function publicJob(db, row, { withDeliverable = true } = {}) {
     instructions: row.instructions,
     lead_id: row.lead_id,
     contact_email: row.contact_email || '',
+    contact_phone: row.contact_phone || '',
+    client_form_token: row.client_form_token || null,
     questions_emailed_at: row.questions_emailed_at || null,
     delivery_emailed_at: row.delivery_emailed_at || null,
     site_shape: resolveSiteShape(row, brief),
@@ -219,6 +240,20 @@ function publicJob(db, row, { withDeliverable = true } = {}) {
   if (withDeliverable) {
     out.deliverable = parseJson(row.deliverable, null);
     out.claims = parseJson(row.claims, []);
+    // Linked website can hold a newer theme.customCss after website.setTheme /
+    // website.edit while the job deliverable lagged — hydrate so Delivery
+    // preview + font saves do not render/save an unstyled baseCss:false theme.
+    if (out.deliverable && row.website_id) {
+      try {
+        const site = engine.getWebsite(db, Number(row.website_id));
+        const siteTheme = parseJson(site.theme, null);
+        if (siteTheme && typeof siteTheme === 'object') {
+          out.deliverable = Object.assign({}, out.deliverable, {
+            theme: mergeThemePreferCss(out.deliverable.theme, siteTheme),
+          });
+        }
+      } catch { /* site optional */ }
+    }
   } else {
     out.has_delivery = !!row.deliverable;
   }
@@ -498,7 +533,7 @@ function createJob(db, input = {}) {
   ensureTables(db);
   const type = String(input.type || '').trim().slice(0, 40);
   const title = String(input.title || '').trim().slice(0, 200);
-  const instructions = String(input.instructions || '').trim().slice(0, 8000);
+  const instructions = String(input.instructions || '').trim().slice(0, 20000);
   if (!type) throw fail('INVALID_ARGS', 'type is required (website, logo, social, flyer, brand, other, or your own label).');
   if (!title) throw fail('INVALID_ARGS', 'title is required.');
   if (!instructions) throw fail('INVALID_ARGS', 'instructions are required. Describe the work for the agent.');
@@ -597,26 +632,28 @@ function notifyAgentQueue(db, message, meta = {}) {
 
 const AGENT_QUEUE_STATUSES = ['waiting_on_agent', 'questions_pending'];
 
-function pendingAgentSummary(db, { previewLimit = 10 } = {}) {
+function pendingAgentSummary(db, { previewLimit = 10, leadId } = {}) {
   ensureTables(db);
+  const leadClause = leadId != null && Number(leadId) > 0 ? ' AND lead_id = ?' : '';
+  const leadParams = leadClause ? [Number(leadId)] : [];
   const counts = { waiting_on_agent: 0, questions_pending: 0 };
   for (const row of db.prepare(
     `SELECT status, COUNT(*) AS c FROM design_jobs
-     WHERE status IN ('waiting_on_agent', 'questions_pending')
+     WHERE status IN ('waiting_on_agent', 'questions_pending')${leadClause}
      GROUP BY status`
-  ).all()) {
+  ).all(...leadParams)) {
     if (row.status in counts) counts[row.status] = row.c;
   }
   const total = counts.waiting_on_agent + counts.questions_pending;
   const limit = Math.min(50, Math.max(1, Number(previewLimit) || 10));
   const preview = db.prepare(
     `SELECT * FROM design_jobs
-     WHERE status IN ('waiting_on_agent', 'questions_pending')
+     WHERE status IN ('waiting_on_agent', 'questions_pending')${leadClause}
      ORDER BY
        CASE status WHEN 'waiting_on_agent' THEN 0 ELSE 1 END,
        created_at ASC, id ASC
      LIMIT ?`
-  ).all(limit).map((row) => publicJob(db, row, { withDeliverable: false }));
+  ).all(...leadParams, limit).map((row) => publicJob(db, row, { withDeliverable: false }));
   return {
     total,
     counts,
@@ -645,7 +682,7 @@ function claimNextAgentJob(db) {
   return getJob(db, row.id, { markInProgress: true });
 }
 
-function listJobs(db, { status, limit, page, pageSize } = {}) {
+function listJobs(db, { status, limit, page, pageSize, leadId } = {}) {
   ensureTables(db);
   const { pageArgs, pageResult } = require('./paginate');
   // Legacy `limit` (MCP) maps to a single page of that size.
@@ -654,13 +691,18 @@ function listJobs(db, { status, limit, page, pageSize } = {}) {
     { page: page || 1, pageSize: pageSize != null ? pageSize : (legacyLimit || 25) },
     { pageSize: 25, maxSize: 100 }
   );
-  let where = '';
+  const clauses = [];
   const params = [];
   if (status) {
     if (!STATUSES.includes(status)) throw fail('INVALID_ARGS', 'Unknown status.');
-    where = ' WHERE status = ?';
+    clauses.push('status = ?');
     params.push(status);
   }
+  if (leadId != null && leadId !== '' && Number(leadId) > 0) {
+    clauses.push('lead_id = ?');
+    params.push(Number(leadId));
+  }
+  const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
   const total = db.prepare(`SELECT COUNT(*) AS c FROM design_jobs${where}`).get(...params).c;
   const rows = db.prepare(
     `SELECT * FROM design_jobs${where} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`
@@ -750,16 +792,327 @@ function settingValue(db, key) {
   } catch { return ''; }
 }
 
-function setContactEmail(db, jobId, email) {
-  getRow(db, jobId);
-  const clean = cleanEmail(email);
-  if (!clean) throw fail('INVALID_ARGS', 'contact email is required.');
-  db.prepare(`UPDATE design_jobs SET contact_email = ?, updated_at = datetime('now') WHERE id = ?`).run(clean, jobId);
-  logActivity(db, `Design job #${jobId} contact email set.`);
+/** Ensure a named outreach campaign exists and is active (processQueue only sends active). */
+function ensureActiveCampaign(db, name) {
+  let campaign = db.prepare('SELECT id, status FROM campaigns WHERE name = ?').get(name);
+  if (!campaign) {
+    return Number(db.prepare(
+      "INSERT INTO campaigns (name, status) VALUES (?, 'active')"
+    ).run(name).lastInsertRowid);
+  }
+  if (campaign.status !== 'active') {
+    db.prepare("UPDATE campaigns SET status = 'active' WHERE id = ?").run(campaign.id);
+  }
+  return campaign.id;
+}
+
+function readFlatSettings(db) {
+  const out = {};
+  try {
+    for (const row of db.prepare('SELECT key, value FROM settings').all()) out[row.key] = row.value;
+  } catch { /* ignore */ }
+  return out;
+}
+
+/**
+ * Queue (optional lead campaign_messages row) then send via workspace SMTP.
+ * Design emails previously only queued into draft campaigns, so processQueue never sent them.
+ */
+async function queueAndSendDesignMail(db, {
+  campaignName,
+  leadId,
+  to,
+  subject,
+  body,
+}) {
+  let messageId = null;
+  if (leadId) {
+    const campaignId = ensureActiveCampaign(db, campaignName);
+    messageId = Number(db.prepare(
+      `INSERT INTO campaign_messages (campaign_id, lead_id, to_email, subject, body, status)
+       VALUES (?, ?, ?, ?, ?, 'queued')`
+    ).run(campaignId, leadId, to, subject, body).lastInsertRowid);
+  }
+
+  const settings = readFlatSettings(db);
+  const { getProvider } = require('./email');
+  const { assertMailjetSenderActive } = require('./mailjetSender');
+  const provider = getProvider(settings, db);
+  try {
+    await assertMailjetSenderActive(settings);
+    // Plain design bodies are wrapped in the shared Bitpype HTML template by SmtpProvider.
+    await provider.send({
+      to,
+      subject,
+      html: body,
+      text: body,
+      title: subject,
+      ctaLabel: /form|questions/i.test(campaignName || '') ? 'Answer on form' : 'Open link',
+    });
+    if (messageId) {
+      const sentAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      db.prepare(
+        "UPDATE campaign_messages SET status = 'sent', sent_at = ?, error = NULL WHERE id = ?"
+      ).run(sentAt, messageId);
+      try {
+        db.prepare('INSERT INTO email_events (message_id, type, detail) VALUES (?, ?, ?)')
+          .run(messageId, 'sent', `via ${provider.name}`);
+      } catch { /* optional */ }
+    }
+    return { messageId, sent: true, provider: provider.name };
+  } catch (err) {
+    if (messageId) {
+      const text = String((err && err.message) || err).slice(0, 1000);
+      db.prepare(
+        "UPDATE campaign_messages SET status = 'failed', error = ? WHERE id = ?"
+      ).run(text, messageId);
+      try {
+        db.prepare('INSERT INTO email_events (message_id, type, detail) VALUES (?, ?, ?)')
+          .run(messageId, 'failed', text.slice(0, 500));
+      } catch { /* optional */ }
+    }
+    throw err;
+  }
+}
+
+function cleanPhone(value) {
+  const raw = String(value == null ? '' : value).trim().slice(0, 40);
+  if (!raw) return '';
+  // Keep digits and leading +; reject empty after strip of junk.
+  const digits = raw.replace(/[^\d+]/g, '');
+  if (digits.replace(/\D/g, '').length < 7) {
+    throw fail('INVALID_ARGS', 'contact phone does not look valid.');
+  }
+  return raw;
+}
+
+/**
+ * Set client contact email and/or phone on a design job.
+ * opts: { email?, phone? } — at least one must be provided (email may be required for mail actions).
+ * Backward-compatible: setContactEmail(db, id, emailString) still works.
+ */
+function setContact(db, jobId, opts = {}) {
+  ensureTables(db);
+  const row = getRow(db, jobId);
+  let emailIn;
+  let phoneIn;
+  if (opts != null && typeof opts === 'object' && !Array.isArray(opts)) {
+    emailIn = opts.email != null ? opts.email : opts.contact_email;
+    phoneIn = opts.phone != null ? opts.phone : opts.contact_phone;
+  } else {
+    emailIn = opts;
+  }
+  const hasEmail = emailIn !== undefined;
+  const hasPhone = phoneIn !== undefined;
+  if (!hasEmail && !hasPhone) {
+    throw fail('INVALID_ARGS', 'email or phone is required.');
+  }
+  let nextEmail = row.contact_email || '';
+  let nextPhone = row.contact_phone || '';
+  if (hasEmail) {
+    const cleaned = String(emailIn || '').trim() ? cleanEmail(emailIn) : '';
+    if (String(emailIn || '').trim() && !cleaned) {
+      throw fail('INVALID_ARGS', 'contact email is not a valid address.');
+    }
+    nextEmail = cleaned || '';
+  }
+  if (hasPhone) {
+    nextPhone = String(phoneIn || '').trim() ? cleanPhone(phoneIn) : '';
+  }
+  if (!nextEmail && !nextPhone) {
+    throw fail('INVALID_ARGS', 'Provide a contact email or phone.');
+  }
+  db.prepare(
+    `UPDATE design_jobs SET contact_email = ?, contact_phone = ?, updated_at = datetime('now') WHERE id = ?`
+  ).run(nextEmail, nextPhone, jobId);
+  // Keep lead contact in sync when this job is tied to a lead.
+  if (row.lead_id) {
+    try {
+      if (hasEmail && nextEmail) {
+        db.prepare(`UPDATE leads SET email = COALESCE(NULLIF(email, ''), ?), updated_at = datetime('now') WHERE id = ?`)
+          .run(nextEmail, row.lead_id);
+      }
+      if (hasPhone && nextPhone) {
+        db.prepare(`UPDATE leads SET phone = ?, updated_at = datetime('now') WHERE id = ?`)
+          .run(nextPhone, row.lead_id);
+      }
+    } catch { /* lead sync is best-effort */ }
+  }
+  logActivity(db, `Design job #${jobId} contact updated.`);
   return publicJob(db, getRow(db, jobId));
 }
 
-function composeQuestionEmail(db, row, pending) {
+function setContactEmail(db, jobId, email, phone) {
+  const opts = (email != null && typeof email === 'object' && !Array.isArray(email))
+    ? email
+    : { email, phone };
+  return setContact(db, jobId, opts);
+}
+
+function appBaseUrl() {
+  return String(process.env.APP_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
+}
+
+/** Ensure the job has a public client-form token; returns the token. */
+function ensureClientFormToken(db, jobId) {
+  ensureTables(db);
+  const row = getRow(db, jobId);
+  if (row.client_form_token && String(row.client_form_token).length >= 16) {
+    return String(row.client_form_token);
+  }
+  const token = crypto.randomBytes(24).toString('base64url');
+  db.prepare(
+    `UPDATE design_jobs SET client_form_token = ?, updated_at = datetime('now') WHERE id = ?`
+  ).run(token, row.id);
+  return token;
+}
+
+function clientFormUrl(workspaceId, token) {
+  const w = Number(workspaceId);
+  const t = encodeURIComponent(String(token || ''));
+  if (!Number.isInteger(w) || w <= 0 || !token) return '';
+  return `${appBaseUrl()}/design-change.html?w=${w}&token=${t}`;
+}
+
+function getJobByFormToken(db, token) {
+  ensureTables(db);
+  const row = db.prepare(
+    'SELECT * FROM design_jobs WHERE client_form_token = ? LIMIT 1'
+  ).get(String(token || ''));
+  if (!row) throw fail('NOT_FOUND', 'This form link is invalid or expired.');
+  const lead = row.lead_id
+    ? db.prepare('SELECT id, business_name, category, city FROM leads WHERE id = ?').get(row.lead_id)
+    : null;
+  const pending = questionsFor(db, row.id).filter((q) => q.answer == null);
+  return {
+    job: {
+      id: row.id,
+      title: row.title,
+      type: row.type,
+      status: row.status,
+      has_delivery: !!row.deliverable,
+    },
+    lead,
+    pending_questions: pending.map((q) => ({ id: q.id, question: q.question })),
+  };
+}
+
+/**
+ * Public client form submit: answer questions and/or queue redesign/improvements.
+ */
+async function submitClientForm(db, token, body = {}) {
+  ensureTables(db);
+  const row = db.prepare(
+    'SELECT * FROM design_jobs WHERE client_form_token = ? LIMIT 1'
+  ).get(String(token || ''));
+  if (!row) throw fail('NOT_FOUND', 'This form link is invalid or expired.');
+
+  const fromEmail = body.email ? cleanEmail(body.email) : null;
+  const answers = body.answers && typeof body.answers === 'object' ? body.answers : {};
+  let answered = 0;
+  for (const [qid, text] of Object.entries(answers)) {
+    const id = Number(qid);
+    const answer = String(text || '').trim();
+    if (!Number.isInteger(id) || id <= 0 || !answer) continue;
+    const q = db.prepare(
+      'SELECT id FROM design_questions WHERE id = ? AND job_id = ? AND answer IS NULL'
+    ).get(id, row.id);
+    if (!q) continue;
+    answerQuestion(db, id, answer, fromEmail || undefined);
+    answered += 1;
+  }
+
+  const changeText = String(body.message || body.instructions || '').trim();
+  let change = null;
+  if (changeText) {
+    const kindRaw = String(body.kind || 'improvements').toLowerCase();
+    const kind = (kindRaw === 'redesign') ? 'redesign' : 'improvements';
+    if (row.type === 'website' && row.deliverable) {
+      const opts = {
+        instructions: changeText.slice(0, 6000),
+        refresh: false,
+        skipAi: true,
+        skipScreenshots: true,
+        source: 'client_form',
+      };
+      change = kind === 'redesign'
+        ? await redesignJob(db, row.id, opts)
+        : await improveJob(db, row.id, opts);
+    } else {
+      let changeReview = null;
+      try {
+        const crr = require('./changeRequestReview');
+        changeReview = crr.reviewChangeRequest(db, {
+          leadId: row.lead_id,
+          message: changeText,
+          kind,
+          source: 'client_form',
+          jobId: row.id,
+        });
+      } catch (e) {
+        console.warn('[designJobs] changeRequestReview on client form:', e && e.message);
+      }
+      const prior = String(row.instructions || '').trim();
+      const reviewBlock = changeReview
+        ? require('./changeRequestReview').formatReviewForInstructions(changeReview)
+        : '';
+      const merged = [
+        '=== CLIENT CHANGE REQUEST ===',
+        changeText.slice(0, 5000),
+        reviewBlock ? `\n${reviewBlock}` : '',
+        '',
+        '=== ORIGINAL INSTRUCTIONS (context) ===',
+        prior.slice(0, 12000),
+      ].filter((x) => x !== '').join('\n').slice(0, 20000);
+      const brief = buildBrief(db, row.lead_id, merged, row.type, row.site_shape || undefined);
+      brief.instruction = merged;
+      brief.request_kind = kind;
+      brief.change_request = {
+        at: new Date().toISOString(),
+        kind,
+        source: 'client_form',
+        classification: changeReview ? changeReview.classification : null,
+        clientMessage: changeReview ? changeReview.clientMessage : null,
+      };
+      if (changeReview) {
+        require('./changeRequestReview').attachReviewToBrief(brief, changeReview);
+      }
+      db.prepare(
+        `UPDATE design_jobs
+         SET instructions = ?, brief = ?, request_kind = ?, status = 'waiting_on_agent',
+             updated_at = datetime('now')
+         WHERE id = ?`
+      ).run(merged, JSON.stringify(brief), kind, row.id);
+      notifyAgentQueue(db,
+        `Design job #${row.id} is waiting_on_agent (client form ${kind}).`,
+        { jobId: row.id, reason: kind, status: 'waiting_on_agent' }
+      );
+      change = publicJob(db, getRow(db, row.id));
+    }
+    logActivity(db, `Design job #${row.id} client form ${kind} (${changeText.length} chars).`);
+  }
+
+  if (!answered && !change) {
+    throw fail('EMPTY', 'Add answers and/or a change request before submitting.');
+  }
+
+  const out = {
+    jobId: row.id,
+    answered,
+    changeQueued: !!change,
+    status: getRow(db, row.id).status,
+  };
+  if (change && change.brief && change.brief.change_request_review) {
+    out.change_request_review = change.brief.change_request_review;
+    out.clientMessage = change.brief.client_facing_message
+      || change.brief.change_request_review.clientMessage
+      || null;
+    out.classification = change.brief.change_request_review.classification;
+  }
+  return out;
+}
+
+function composeQuestionEmail(db, row, pending, { formUrl } = {}) {
   const lead = row.lead_id ? db.prepare('SELECT business_name, email FROM leads WHERE id = ?').get(row.lead_id) : null;
   const business = (lead && lead.business_name) || row.title;
   const to = String(row.contact_email || (lead && lead.email) || '').trim().toLowerCase();
@@ -767,6 +1120,18 @@ function composeQuestionEmail(db, row, pending) {
   const subject = `${tag} Questions: ${row.title}`.slice(0, 200);
   const lines = pending.map((q, i) => `${i + 1}. ${q.question}`).join('\n');
   const footer = settingValue(db, 'mail.footer');
+  const formLines = formUrl
+    ? [
+      '',
+      'Easiest: answer on this secure form (no login):',
+      formUrl,
+      '',
+      'Or reply to this email and keep the subject line.',
+    ]
+    : [
+      '',
+      'Please reply to this email and keep the subject line so we can match your answers to this project.',
+    ];
   const body = [
     `${tag} — ${row.title}`,
     `Business: ${business}`,
@@ -775,19 +1140,20 @@ function composeQuestionEmail(db, row, pending) {
     'A few questions before this design continues:',
     '',
     lines,
-    '',
-    'Please reply to this email and keep the subject line so we can match your answers to this project.',
+    ...formLines,
     footer ? `\n${footer}` : '',
   ].join('\n');
-  return { to, subject, body, business };
+  return { to, subject, body, business, formUrl: formUrl || null };
 }
 
-function emailQuestions(db, jobId) {
+async function emailQuestions(db, jobId, { workspaceId } = {}) {
   ensureTables(db);
   const row = getRow(db, jobId);
   const pending = questionsFor(db, jobId).filter((q) => q.answer == null);
   if (!pending.length) throw fail('NO_QUESTIONS', 'This job has no unanswered questions to email.');
-  const draft = composeQuestionEmail(db, row, pending);
+  const token = ensureClientFormToken(db, jobId);
+  const formUrl = workspaceId ? clientFormUrl(workspaceId, token) : '';
+  const draft = composeQuestionEmail(db, getRow(db, jobId), pending, { formUrl });
   const paused = settingValue(db, 'automation_paused') === '1';
   if (paused) {
     throw fail('AUTOMATION_PAUSED', 'Automation is paused. These questions were not emailed.');
@@ -804,7 +1170,7 @@ function emailQuestions(db, jobId) {
     `SELECT COUNT(*) AS c FROM campaign_messages WHERE status = 'sent' AND date(sent_at) = date('now', 'localtime')`
   ).get().c;
   if (sentToday >= cap) {
-    throw fail('CAP_REACHED', `Daily outreach cap reached (${cap}). Questions were not queued.`);
+    throw fail('CAP_REACHED', `Daily outreach cap reached (${cap}). Questions were not emailed.`);
   }
   const host = settingValue(db, 'smtp.host').trim();
   const fromEmail = settingValue(db, 'smtp.from_email').trim();
@@ -821,29 +1187,33 @@ function emailQuestions(db, jobId) {
       error: 'SMTP is not configured (smtp.host / smtp.from_email). Questions were composed but not emailed.',
     };
   }
-  let messageId = null;
-  if (row.lead_id) {
-    let campaign = db.prepare("SELECT id FROM campaigns WHERE name = ?").get('Design questions');
-    if (!campaign) {
-      campaign = { id: Number(db.prepare("INSERT INTO campaigns (name, status) VALUES ('Design questions', 'draft')").run().lastInsertRowid) };
-    }
-    messageId = Number(db.prepare(
-      `INSERT INTO campaign_messages (campaign_id, lead_id, to_email, subject, body, status)
-       VALUES (?, ?, ?, ?, ?, 'queued')`
-    ).run(campaign.id, row.lead_id, draft.to, draft.subject, draft.body).lastInsertRowid);
+
+  let sendResult;
+  try {
+    sendResult = await queueAndSendDesignMail(db, {
+      campaignName: 'Design questions',
+      leadId: row.lead_id,
+      to: draft.to,
+      subject: draft.subject,
+      body: draft.body,
+    });
+  } catch (err) {
+    throw fail('SEND_FAILED', `Could not send questions email: ${err.message || err}`);
   }
+
   const info = db.prepare(
     `INSERT INTO design_question_emails (job_id, to_email, subject, body, status, message_id)
-     VALUES (?, ?, ?, ?, 'queued', ?)`
-  ).run(row.id, draft.to, draft.subject, draft.body, messageId);
+     VALUES (?, ?, ?, ?, 'sent', ?)`
+  ).run(row.id, draft.to, draft.subject, draft.body, sendResult.messageId);
   db.prepare(`UPDATE design_jobs SET questions_emailed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(row.id);
-  logActivity(db, `Design job #${row.id} questions queued to ${draft.to} (${pending.length} question(s), not sent).`);
+  logActivity(db, `Design job #${row.id} questions emailed to ${draft.to} (${pending.length} question(s), via ${sendResult.provider}).`);
   return {
-    queued: true,
-    sent: false,
+    queued: !!sendResult.messageId,
+    sent: true,
+    provider: sendResult.provider,
     jobId: row.id,
     emailId: Number(info.lastInsertRowid),
-    messageId,
+    messageId: sendResult.messageId,
     to: draft.to,
     subject: draft.subject,
     body: draft.body,
@@ -919,7 +1289,7 @@ function formatDeliveryItemBlock(item, index, groupKey) {
 /**
  * Clean plain-text email body for non-website deliveries (cards → email).
  */
-function formatDeliveryEmailBody(db, row, payload) {
+function formatDeliveryEmailBody(db, row, payload, { formUrl } = {}) {
   const lead = row.lead_id
     ? db.prepare('SELECT business_name, email FROM leads WHERE id = ?').get(row.lead_id)
     : null;
@@ -931,7 +1301,12 @@ function formatDeliveryEmailBody(db, row, payload) {
   sections.push(`[Job #${row.id}] — ${row.title}`);
   sections.push(`Kind: ${row.type}`);
   sections.push(`For: ${business}`);
-  sections.push('Reply to this email (keep the subject) if you want changes or improvements.');
+  if (formUrl) {
+    sections.push('Want changes? Submit them on this form (no login):');
+    sections.push(formUrl);
+  } else {
+    sections.push('Reply to this email (keep the subject) if you want changes or improvements.');
+  }
   if (payload && payload.market) sections.push(`Market: ${payload.market}`);
   if (payload && payload.contact && typeof payload.contact === 'object') {
     const c = payload.contact;
@@ -1018,12 +1393,14 @@ function formatDeliveryEmailBody(db, row, payload) {
   }
 
   sections.push('—');
-  sections.push('Sent from Website Scout. Reply if you want changes.');
+  sections.push(formUrl
+    ? 'Sent from Bitpype. Use the form link above for changes.'
+    : 'Sent from Bitpype. Reply if you want changes.');
   if (footer) sections.push(footer);
   return sections.join('\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 50000);
 }
 
-function composeDeliveryEmail(db, row, payload) {
+function composeDeliveryEmail(db, row, payload, { formUrl } = {}) {
   const lead = row.lead_id
     ? db.prepare('SELECT business_name, email FROM leads WHERE id = ?').get(row.lead_id)
     : null;
@@ -1031,15 +1408,15 @@ function composeDeliveryEmail(db, row, payload) {
   const kindLabel = String(row.type || 'delivery').replace(/[-_]/g, ' ');
   const tag = `[Job #${row.id}]`;
   const subject = `${tag} ${kindLabel} ready: ${row.title}`.slice(0, 200);
-  const body = formatDeliveryEmailBody(db, row, payload);
-  return { to, subject, body };
+  const body = formatDeliveryEmailBody(db, row, payload, { formUrl });
+  return { to, subject, body, formUrl: formUrl || null };
 }
 
 /**
- * Queue a clean client email of a non-website delivery (social, logo, flyer, …).
- * Same SMTP/queue rules as emailQuestions — composes even when SMTP is missing.
+ * Email a clean client copy of a non-website delivery (social, logo, flyer, …).
+ * Same SMTP/cap rules as emailQuestions — composes even when SMTP is missing.
  */
-function emailDelivery(db, jobId) {
+async function emailDelivery(db, jobId, { workspaceId } = {}) {
   ensureTables(db);
   const row = getRow(db, jobId);
   if (row.type === 'website') {
@@ -1049,7 +1426,9 @@ function emailDelivery(db, jobId) {
   if (!payload || typeof payload !== 'object') {
     throw fail('NO_DELIVERY', 'The agent has not delivered this job yet.');
   }
-  const draft = composeDeliveryEmail(db, row, payload);
+  const token = ensureClientFormToken(db, jobId);
+  const formUrl = workspaceId ? clientFormUrl(workspaceId, token) : '';
+  const draft = composeDeliveryEmail(db, getRow(db, jobId), payload, { formUrl });
   const paused = settingValue(db, 'automation_paused') === '1';
   if (paused) {
     throw fail('AUTOMATION_PAUSED', 'Automation is paused. Delivery was not emailed.');
@@ -1066,7 +1445,7 @@ function emailDelivery(db, jobId) {
     `SELECT COUNT(*) AS c FROM campaign_messages WHERE status = 'sent' AND date(sent_at) = date('now', 'localtime')`
   ).get().c;
   if (sentToday >= cap) {
-    throw fail('CAP_REACHED', `Daily outreach cap reached (${cap}). Delivery was not queued.`);
+    throw fail('CAP_REACHED', `Daily outreach cap reached (${cap}). Delivery was not emailed.`);
   }
   const host = settingValue(db, 'smtp.host').trim();
   const fromEmail = settingValue(db, 'smtp.from_email').trim();
@@ -1082,33 +1461,35 @@ function emailDelivery(db, jobId) {
       error: 'SMTP is not configured (smtp.host / smtp.from_email). Delivery email was composed but not queued.',
     };
   }
-  let messageId = null;
-  if (row.lead_id) {
-    let campaign = db.prepare("SELECT id FROM campaigns WHERE name = ?").get('Design deliveries');
-    if (!campaign) {
-      campaign = {
-        id: Number(db.prepare("INSERT INTO campaigns (name, status) VALUES ('Design deliveries', 'draft')").run().lastInsertRowid),
-      };
-    }
-    messageId = Number(db.prepare(
-      `INSERT INTO campaign_messages (campaign_id, lead_id, to_email, subject, body, status)
-       VALUES (?, ?, ?, ?, ?, 'queued')`
-    ).run(campaign.id, row.lead_id, draft.to, draft.subject, draft.body).lastInsertRowid);
+
+  let sendResult;
+  try {
+    sendResult = await queueAndSendDesignMail(db, {
+      campaignName: 'Design deliveries',
+      leadId: row.lead_id,
+      to: draft.to,
+      subject: draft.subject,
+      body: draft.body,
+    });
+  } catch (err) {
+    throw fail('SEND_FAILED', `Could not send delivery email: ${err.message || err}`);
   }
+
   const info = db.prepare(
     `INSERT INTO design_delivery_emails (job_id, to_email, subject, body, status, message_id)
-     VALUES (?, ?, ?, ?, 'queued', ?)`
-  ).run(row.id, draft.to, draft.subject, draft.body, messageId);
+     VALUES (?, ?, ?, ?, 'sent', ?)`
+  ).run(row.id, draft.to, draft.subject, draft.body, sendResult.messageId);
   db.prepare(
     `UPDATE design_jobs SET delivery_emailed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`
   ).run(row.id);
-  logActivity(db, `Design job #${row.id} delivery email queued to ${draft.to} (not sent).`);
+  logActivity(db, `Design job #${row.id} delivery email sent to ${draft.to} (via ${sendResult.provider}).`);
   return {
-    queued: true,
-    sent: false,
+    queued: !!sendResult.messageId,
+    sent: true,
+    provider: sendResult.provider,
     jobId: row.id,
     emailId: Number(info.lastInsertRowid),
-    messageId,
+    messageId: sendResult.messageId,
     to: draft.to,
     subject: draft.subject,
     body: draft.body,
@@ -1255,7 +1636,7 @@ function collectClaims(payload, verified, agentClaims) {
   return claims;
 }
 
-function validateWebsitePayload(payload) {
+function validateWebsitePayload(payload, previousPages = [], previousTheme = {}) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw fail('INVALID_ARGS', 'website payload must be an object.');
   }
@@ -1268,33 +1649,98 @@ function validateWebsitePayload(payload) {
     if (typeof page.title !== 'string' || !page.title.trim()) throw fail('INVALID_ARGS', `pages[${i}].title is required.`);
     const hasHtml = typeof page.html === 'string' && page.html.trim();
     const hasSections = Array.isArray(page.sections) && page.sections.length > 0;
-    if (!hasHtml && !hasSections) {
-      throw fail('INVALID_ARGS', `pages[${i}] needs sections or html.`);
+    if (!hasSections) {
+      throw fail(
+        'INVALID_ARGS',
+        `pages[${i}] must use modular sections (nav/hero/columns/text/text_image/cards/…). `
+          + 'Freeform page.html is no longer accepted as the page body — put HTML fragments in an html section.'
+      );
     }
-    if (hasSections) {
-      page.sections.forEach((section, j) => {
-        if (!section || typeof section !== 'object') throw fail('INVALID_ARGS', `pages[${i}].sections[${j}] must be an object.`);
-        if (typeof section.type !== 'string' || !section.type.trim()) {
-          throw fail('INVALID_ARGS', `pages[${i}].sections[${j}].type is required.`);
-        }
-        if (!section.content || typeof section.content !== 'object' || Array.isArray(section.content)) {
-          throw fail('INVALID_ARGS', `pages[${i}].sections[${j}].content must be an object.`);
-        }
-      });
+    if (hasHtml) {
+      // Prefer sections; drop legacy freeform so deliverables stay modular.
+      delete page.html;
     }
+    try {
+      const structure = require('./siteStructure');
+      page.sections = structure.ensureNavFirstSections(page.sections);
+    } catch { /* */ }
+    if (!page.sections[0] || String(page.sections[0].type || '').toLowerCase() !== 'nav') {
+      throw fail('INVALID_ARGS', `pages[${i}].sections[0] must be type "nav" (nav always first at the top).`);
+    }
+    page.sections.forEach((section, j) => {
+      if (!section || typeof section !== 'object') throw fail('INVALID_ARGS', `pages[${i}].sections[${j}] must be an object.`);
+      if (typeof section.type !== 'string' || !section.type.trim()) {
+        throw fail('INVALID_ARGS', `pages[${i}].sections[${j}].type is required.`);
+      }
+      if (!section.content || typeof section.content !== 'object' || Array.isArray(section.content)) {
+        throw fail('INVALID_ARGS', `pages[${i}].sections[${j}].content must be an object.`);
+      }
+    });
   });
   if (payload.theme != null && (typeof payload.theme !== 'object' || Array.isArray(payload.theme))) {
     throw fail('INVALID_ARGS', 'theme must be an object.');
+  }
+  require('./siteContentQuality').assertNoNewDefects(payload.pages, previousPages, payload.theme, previousTheme);
+  // Reject class-heavy freeform HTML with missing/unapplied CSS before it becomes live.
+  // Match liberateTheme so we validate the same theme that deliver/save will store.
+  try {
+    engine.assertPagesCss(payload.pages, liberateTheme(payload.theme, payload.pages));
+  } catch (e) {
+    if (e && e.code === 'INVALID_CSS') {
+      throw fail('INVALID_CSS', e.message || 'CSS validation failed.');
+    }
+    throw e;
+  }
+  // Curated Lucide icons — unknown names fail loudly (no silent blanks).
+  try {
+    require('./siteIcons').assertKnownIcons(payload.pages);
+  } catch (e) {
+    if (e && e.code === 'INVALID_ICON') {
+      throw fail('INVALID_ICON', e.message || 'Unknown icon name.');
+    }
+    throw e;
   }
 }
 
 function liberateTheme(theme, pages) {
   const t = theme && typeof theme === 'object' && !Array.isArray(theme) ? Object.assign({}, theme) : {};
   const freeform = (pages || []).some((p) => typeof p.html === 'string' && p.html.trim());
-  if (freeform || (t.customCss && String(t.customCss).trim())) {
+  const modular = (pages || []).some((p) => Array.isArray(p.sections) && p.sections.length > 0);
+  // Freestyle agent CSS: any customCss (or legacy freeform / modular deliver) opts out of stock base skin
+  // unless the agent explicitly set baseCss:true.
+  if (freeform || modular || (t.customCss && String(t.customCss).trim())) {
     if (t.baseCss !== true && t.baseCss !== 1 && t.baseCss !== '1') t.baseCss = false;
   }
   return t;
+}
+
+/** Prefer the richer customCss/customJs when two theme objects diverge. */
+function mergeThemePreferCss(baseTheme, richerTheme) {
+  const base = baseTheme && typeof baseTheme === 'object' && !Array.isArray(baseTheme)
+    ? Object.assign({}, baseTheme)
+    : {};
+  const rich = richerTheme && typeof richerTheme === 'object' && !Array.isArray(richerTheme)
+    ? richerTheme
+    : null;
+  if (!rich) return base;
+  const baseCss = typeof base.customCss === 'string' ? base.customCss.trim() : '';
+  const richCss = typeof rich.customCss === 'string' ? rich.customCss.trim() : '';
+  if (richCss.length > baseCss.length) base.customCss = rich.customCss;
+  const baseJs = typeof base.customJs === 'string' ? base.customJs.trim() : '';
+  const richJs = typeof rich.customJs === 'string' ? rich.customJs.trim() : '';
+  if (richJs.length > baseJs.length) base.customJs = rich.customJs;
+  const baseCssOff = base.baseCss === false || base.baseCss === 0 || base.baseCss === '0';
+  const richCssOff = rich.baseCss === false || rich.baseCss === 0 || rich.baseCss === '0';
+  if (!baseCssOff && richCssOff && richCss) base.baseCss = false;
+  // Fill empty font stacks from the richer theme (Delivery font toolbar).
+  if (!(typeof base.font === 'string' && base.font.trim()) && typeof rich.font === 'string' && rich.font.trim()) {
+    base.font = rich.font;
+  }
+  if (!(typeof base.headingFont === 'string' && base.headingFont.trim())
+    && typeof rich.headingFont === 'string' && rich.headingFont.trim()) {
+    base.headingFont = rich.headingFont;
+  }
+  return base;
 }
 
 function upsertWebsite(db, job, payload) {
@@ -1326,7 +1772,7 @@ function upsertWebsite(db, job, payload) {
   return websiteId;
 }
 
-function deliverJob(db, jobId, payload, agentClaims, opts = {}) {
+async function deliverJob(db, jobId, payload, agentClaims, opts = {}) {
   const row = getRow(db, jobId);
   const hadPriorDelivery = !!row.deliverable;
   const priorRequestKind = row.request_kind || null;
@@ -1339,9 +1785,20 @@ function deliverJob(db, jobId, payload, agentClaims, opts = {}) {
     siteShape = normalizeSiteShape(rawShape);
     if (!siteShape) throw fail('INVALID_ARGS', 'site_shape must be "landing" or "multipage".');
   }
+  let pageWarnings = [];
   if (row.type === 'website') {
     validateWebsitePayload(payload);
     payload.theme = liberateTheme(payload.theme, payload.pages);
+    if (row.lead_id && Array.isArray(payload.pages)) {
+      try {
+        const forms = require('../server/contactForms');
+        const sanitized = forms.sanitizeAgentPages(db, row.lead_id, payload.pages, {});
+        payload = Object.assign({}, payload, { pages: sanitized.pages });
+        pageWarnings = sanitized.warnings || [];
+      } catch (e) {
+        console.warn('[designJobs] sanitizeAgentPages on deliver:', e.message || e);
+      }
+    }
   }
   const encoded = JSON.stringify(payload);
   if (encoded.length > 5000000) throw fail('INVALID_ARGS', 'payload is too large.');
@@ -1386,7 +1843,54 @@ function deliverJob(db, jobId, payload, agentClaims, opts = {}) {
       pageCount: row.type === 'website' && payload.pages ? payload.pages.length : null,
     });
   } catch { /* learning optional */ }
-  return publicJob(db, getRow(db, jobId));
+
+  // Whole-site verification after change-request deliveries (and always for website).
+  let changeVerification = null;
+  if (row.type === 'website' && websiteId) {
+    try {
+      const crr = require('./changeRequestReview');
+      changeVerification = await crr.verifyAfterChange(db, websiteId, { skipAi: true });
+      const briefRow = getRow(db, jobId);
+      let brief = parseJson(briefRow.brief, {}) || {};
+      brief.change_verification = {
+        at: new Date().toISOString(),
+        afterRequestKind: priorRequestKind || null,
+        ...changeVerification,
+      };
+      if (brief.change_request_review && brief.change_request_review.log) {
+        brief.change_request_review.log.verification = {
+          ok: changeVerification.ok,
+          summary: changeVerification.summary,
+        };
+        brief.change_request_review.log.done = [
+          ...(brief.change_request_review.log.done || []),
+          changeVerification.summary,
+        ];
+      }
+      db.prepare(
+        `UPDATE design_jobs SET brief = ?, updated_at = datetime('now') WHERE id = ?`
+      ).run(JSON.stringify(brief), jobId);
+    } catch (e) {
+      console.warn('[designJobs] change verification failed:', e && e.message);
+    }
+  }
+
+  const job = publicJob(db, getRow(db, jobId));
+  if (pageWarnings.length) job.warnings = pageWarnings;
+  if (changeVerification) {
+    job.change_verification = changeVerification;
+    job.change_summary = [
+      priorRequestKind ? `Change kind: ${priorRequestKind}` : null,
+      job.brief && job.brief.change_request_review
+        ? `Classification: ${job.brief.change_request_review.classification}`
+        : null,
+      job.brief && job.brief.client_facing_message
+        ? `Client: ${job.brief.client_facing_message}`
+        : null,
+      changeVerification.summary,
+    ].filter(Boolean).join('\n');
+  }
+  return job;
 }
 
 function saveWebsiteEdit(db, jobId, pages, theme) {
@@ -1394,13 +1898,42 @@ function saveWebsiteEdit(db, jobId, pages, theme) {
   if (row.type !== 'website') throw fail('NOT_A_WEBSITE', 'Block edits apply to website deliveries.');
   const payload = parseJson(row.deliverable, null);
   if (!payload || !Array.isArray(payload.pages)) throw fail('NO_DELIVERY', 'The agent has not delivered a website yet.');
-  validateWebsitePayload({ pages, theme: theme || payload.theme });
-  const freeform = (pages || []).some((p) => typeof p.html === 'string' && p.html.trim())
+  let nextPages = pages;
+  let pageWarnings = [];
+  if (row.lead_id && Array.isArray(pages)) {
+    try {
+      const forms = require('../server/contactForms');
+      const sanitized = forms.sanitizeAgentPages(db, row.lead_id, pages, {});
+      nextPages = sanitized.pages;
+      pageWarnings = sanitized.warnings || [];
+    } catch (e) {
+      console.warn('[designJobs] sanitizeAgentPages on saveWebsiteEdit:', e.message || e);
+    }
+  }
+  validateWebsitePayload({ pages: nextPages, theme: theme || payload.theme }, payload.pages, payload.theme);
+  const freeform = (nextPages || []).some((p) => typeof p.html === 'string' && p.html.trim())
     || (payload.pages || []).some((p) => typeof p.html === 'string' && p.html.trim());
   // Freeform agent HTML is not forced through locked template fields.
-  payload.pages = freeform ? pages : keepLocked(payload.pages, pages);
+  payload.pages = freeform ? nextPages : keepLocked(payload.pages, nextPages);
   if (theme && typeof theme === 'object' && !Array.isArray(theme)) {
-    payload.theme = liberateTheme(theme, payload.pages);
+    // Merge onto existing deliverable theme so font-only saves cannot wipe customCss.
+    const prev = payload.theme && typeof payload.theme === 'object' ? payload.theme : {};
+    const merged = Object.assign({}, prev, theme);
+    if (!String(theme.customCss || '').trim() && String(prev.customCss || '').trim()) {
+      merged.customCss = prev.customCss;
+    }
+    if (!String(theme.customJs || '').trim() && String(prev.customJs || '').trim()) {
+      merged.customJs = prev.customJs;
+    }
+    // When deliverable already lost CSS but the linked website still has it, restore.
+    if (row.website_id && !String(merged.customCss || '').trim()) {
+      try {
+        const site = engine.getWebsite(db, Number(row.website_id));
+        const siteTheme = parseJson(site.theme, null);
+        if (siteTheme) Object.assign(merged, mergeThemePreferCss(merged, siteTheme));
+      } catch { /* optional */ }
+    }
+    payload.theme = liberateTheme(merged, payload.pages);
   }
   const encoded = JSON.stringify(payload);
   db.prepare(`UPDATE design_jobs SET deliverable = ?, updated_at = datetime('now') WHERE id = ?`).run(encoded, jobId);
@@ -1414,7 +1947,9 @@ function saveWebsiteEdit(db, jobId, pages, theme) {
       .run(row.website_id, versionNo, pagesJson, themeJson, 'Block edit');
   }
   logActivity(db, `Design job #${jobId} website blocks saved.`);
-  return publicJob(db, getRow(db, jobId));
+  const job = publicJob(db, getRow(db, jobId));
+  if (pageWarnings.length) job.warnings = pageWarnings;
+  return job;
 }
 
 const LOCKED_KEYS = ['phone', 'phone_display', 'email', 'address', 'address_lines', 'hours', 'rating', 'review_count', 'business_name'];
@@ -1460,7 +1995,29 @@ async function addImages(db, jobId, opts = {}) {
   const count = pexels.clampCount(opts.count == null ? 5 : opts.count);
   const photos = await pexels.searchPhotos(key, query, count);
   if (!photos.length) throw fail('PEXELS_EMPTY', `Pexels returned no photos for "${query}".`);
-  payload.pages = engine.applyImagesToPages(payload.pages, photos, { heroImage: true });
+  // Store bytes in app export storage — never leave images.pexels.com hotlinks.
+  const openPreview = require('./openPreview');
+  const imgDir = path.join(openPreview.exportRoot(), `design-${jobId}`, 'images');
+  const localPhotos = await pexels.localizePhotos(photos, imgDir, { prefix: 'pexels' });
+  if (!localPhotos.length) throw fail('PEXELS_DOWNLOAD', 'Could not store Pexels photos in app storage.');
+  const freeformOnly = payload.pages.length && payload.pages.every((p) =>
+    typeof p.html === 'string' && p.html.trim() && !(Array.isArray(p.sections) && p.sections.length));
+  if (freeformOnly) {
+    payload.pages = injectRelativeImagesIntoFreeform(payload.pages, localPhotos);
+  } else {
+    payload.pages = engine.applyImagesToPages(payload.pages, localPhotos, { heroImage: true });
+  }
+  if (!Array.isArray(payload.images)) payload.images = [];
+  payload.images.push(...localPhotos.map((p) => ({
+    alt: p.alt,
+    source: 'pexels',
+    path: p.path,
+    url: p.url,
+    name: p.name,
+    photographer: p.photographer,
+    photographer_url: p.photographer_url,
+    pexels_url: p.pexels_url,
+  })));
   const encoded = JSON.stringify(payload);
   db.prepare(`UPDATE design_jobs SET deliverable = ?, updated_at = datetime('now') WHERE id = ?`).run(encoded, jobId);
   if (row.website_id) {
@@ -1471,8 +2028,8 @@ async function addImages(db, jobId, opts = {}) {
     db.prepare('INSERT INTO website_versions (website_id, version_no, pages, theme, note) VALUES (?, ?, ?, ?, ?)')
       .run(row.website_id, versionNo, pagesJson, themeJson, `Pexels photos for "${query}"`);
   }
-  logActivity(db, `Design job #${jobId} attached ${photos.length} Pexels photo(s) for "${query}".`);
-  return { id: jobId, count: photos.length, query };
+  logActivity(db, `Design job #${jobId} attached ${localPhotos.length} Pexels photo(s) for "${query}" (stored locally).`);
+  return { id: jobId, count: localPhotos.length, query, stored: true };
 }
 
 function defaultImagePrompt(db, row) {
@@ -1483,7 +2040,7 @@ function defaultImagePrompt(db, row) {
   const category = (lead && lead.category) || row.type || 'business';
   const place = [lead && lead.city, lead && lead.state].filter(Boolean).join(', ');
   if (row.type === 'logo') {
-    return `Clean professional logo mark for ${business} (${category}${place ? `, ${place}` : ''}). Simple vector-friendly shapes, high contrast, no tiny text, white background.`;
+    return `Clean professional logo mark for ${business} (${category}${place ? `, ${place}` : ''}). Simple vector-friendly shapes, high contrast, no tiny text, transparent or plain background, no mockups.`;
   }
   if (row.type === 'social') {
     return `Square social media photo for ${business}${place ? ` in ${place}` : ''}, ${category}, bright natural light, authentic local-business feel, no fake text overlays.`;
@@ -1532,7 +2089,7 @@ function injectRelativeImagesIntoFreeform(pages, photos) {
     if (!page || typeof page.html !== 'string' || !page.html.trim()) return page;
     let html = page.html;
     html = html.replace(
-      /src=(["'])(data:image\/[^"']*|https?:\/\/(?:images\.unsplash\.com|picsum\.photos|via\.placeholder\.com)[^"']*)\1/gi,
+      /src=(["'])(data:image\/[^"']*|https?:\/\/(?:images\.unsplash\.com|images\.pexels\.com|picsum\.photos|via\.placeholder\.com)[^"']*)\1/gi,
       (m, q) => {
         if (idx >= photos.length) return m;
         const url = photos[idx++].url;
@@ -1541,6 +2098,28 @@ function injectRelativeImagesIntoFreeform(pages, photos) {
     );
     return Object.assign({}, page, { html });
   });
+}
+
+/**
+ * Download any Pexels/Unsplash hotlinks in a website payload into
+ * EXPORT_ROOT/design-{jobId}/images and rewrite src to images/….
+ */
+async function localizePayloadRemoteImages(jobId, payload) {
+  if (!payload || typeof payload !== 'object' || !Array.isArray(payload.pages)) return payload;
+  const openPreview = require('./openPreview');
+  const imgDir = path.join(openPreview.exportRoot(), `design-${Number(jobId)}`, 'images');
+  const { pages, assets } = await pexels.localizeUrlsInPages(payload.pages, imgDir, { prefix: 'pexels' });
+  const next = Object.assign({}, payload, { pages });
+  if (assets.length) {
+    if (!Array.isArray(next.images)) next.images = [];
+    const seen = new Set(next.images.map((im) => im && (im.name || im.url)).filter(Boolean));
+    for (const a of assets) {
+      if (seen.has(a.name) || seen.has(a.url)) continue;
+      next.images.push(a);
+      seen.add(a.name);
+    }
+  }
+  return next;
 }
 
 /**
@@ -1662,6 +2241,101 @@ async function generateJobImages(db, jobId, opts = {}) {
   };
 }
 
+function defaultLogoPrompt(db, row) {
+  const lead = row.lead_id
+    ? db.prepare('SELECT business_name, category, city, state FROM leads WHERE id = ?').get(row.lead_id)
+    : null;
+  const business = (lead && lead.business_name) || row.title || 'local business';
+  const category = (lead && lead.category) || 'business';
+  const place = [lead && lead.city, lead && lead.state].filter(Boolean).join(', ');
+  return `Professional logo mark for ${business} (${category}${place ? `, ${place}` : ''}). `
+    + 'Flat vector-friendly icon or wordmark, high contrast, centered composition, '
+    + 'transparent background, no mockups, no fake small text, no photorealistic scene.';
+}
+
+/**
+ * Generate one logo image, process to transparent PNG, and attach to the job
+ * deliverable. Caller (domain.designGenerateLogo) applies it to a linked website.
+ */
+async function generateJobLogo(db, jobId, opts = {}) {
+  ensureTables(db);
+  const fs = require('fs');
+  const path = require('path');
+  const openaiImages = require('./openaiImages');
+  const logoProcess = require('./logoProcess');
+
+  const row = getRow(db, jobId);
+  const prompt = String(opts.prompt || '').trim() || defaultLogoPrompt(db, row);
+  const result = await openaiImages.generateImages(db, prompt, {
+    n: 1,
+    size: opts.size || '1024x1024',
+    model: opts.model,
+    quality: opts.quality != null ? opts.quality : 'medium',
+    background: 'transparent',
+    output_format: 'png',
+    jobId,
+    leadId: row.lead_id,
+    note: `design logo #${jobId}`,
+  });
+
+  const src = result.images[0];
+  if (!src || !src.path) throw fail('AI_EMPTY', 'Image provider returned no logo file.');
+  const processed = await logoProcess.processLogoBuffer(fs.readFileSync(src.path));
+
+  const logoName = 'logo.png';
+  const imgDir = path.join(require('./openPreview').exportRoot(), `design-${jobId}`, 'images');
+  fs.mkdirSync(imgDir, { recursive: true });
+  const logoDest = path.join(imgDir, logoName);
+  fs.writeFileSync(logoDest, processed.buffer);
+  const logoRel = `images/${logoName}`;
+
+  let payload = parseJson(row.deliverable, null);
+  if (!payload || typeof payload !== 'object') payload = {};
+  if (!Array.isArray(payload.images)) payload.images = [];
+  payload.images.push({
+    name: logoName,
+    path: logoDest,
+    url: logoRel,
+    alt: String(prompt).slice(0, 120),
+    source: 'openai-logo',
+    role: 'logo',
+    model: result.model,
+  });
+  if (Array.isArray(payload.files)) {
+    payload.files.push({
+      name: logoName, path: logoDest, url: logoRel, format: 'png', source: 'openai-logo', role: 'logo',
+    });
+  } else if (!payload.files) {
+    payload.files = [{
+      name: logoName, path: logoDest, url: logoRel, format: 'png', source: 'openai-logo', role: 'logo',
+    }];
+  }
+
+  db.prepare(
+    `UPDATE design_jobs SET deliverable = ?, updated_at = datetime('now') WHERE id = ?`
+  ).run(JSON.stringify(payload), jobId);
+
+  let websiteId = row.website_id || null;
+  if (!websiteId && row.lead_id) {
+    const site = db.prepare('SELECT id FROM websites WHERE lead_id = ? ORDER BY id DESC LIMIT 1').get(row.lead_id);
+    if (site) websiteId = site.id;
+  }
+
+  logActivity(db, `Design job #${jobId} generated logo (${result.model}).`);
+  return {
+    id: jobId,
+    websiteId: websiteId || null,
+    leadId: row.lead_id || null,
+    model: result.model,
+    prompt: result.prompt,
+    logoUrl: logoRel,
+    path: logoDest,
+    buffer: processed.buffer,
+    mode: 'image',
+    processed: true,
+  };
+}
+
 async function openPreview(db, jobId) {
   const row = getRow(db, jobId);
   if (row.type !== 'website') throw fail('NOT_A_WEBSITE', 'Only a website delivery can open in a browser.');
@@ -1717,18 +2391,20 @@ async function previewUrl(db, jobId, opts = {}) {
   }
   const openPreviewMod = require('./openPreview');
   const folder = `design-${row.id}`;
+  const exportOpts = { images: Array.isArray(payload.images) ? payload.images : [] };
   if (opts.open) {
-    const opened = await openPreviewMod.openPagesFile(payload.pages, payload.theme || {}, folder);
+    const opened = await openPreviewMod.openPagesFile(payload.pages, payload.theme || {}, folder, exportOpts);
     logActivity(db, `Design job #${jobId} preview URL opened: ${opened.url || opened.path}`);
     return {
       id: jobId,
       url: opened.url,
       path: opened.path,
       folder: opened.folder || folder,
+      files: opened.files,
       opened: true,
     };
   }
-  const preview = await openPreviewMod.previewUrlForPages(payload.pages, payload.theme || {}, folder);
+  const preview = await openPreviewMod.previewUrlForPages(payload.pages, payload.theme || {}, folder, exportOpts);
   logActivity(db, `Design job #${jobId} preview URL: ${preview.url}`);
   return {
     id: jobId,
@@ -1824,6 +2500,7 @@ module.exports = {
   askQuestion,
   listAnswers,
   answerQuestion,
+  setContact,
   setContactEmail,
   emailQuestions,
   emailDelivery,
@@ -1831,9 +2508,12 @@ module.exports = {
   composeDeliveryEmail,
   recordEmailReply,
   deliverJob,
+  localizePayloadRemoteImages,
+  mergeThemePreferCss,
   saveWebsiteEdit,
   addImages,
   generateJobImages,
+  generateJobLogo,
   openPreview,
   previewUrl,
   assetBaseUrl,
@@ -1842,6 +2522,10 @@ module.exports = {
   reviewJob,
   redesignJob,
   improveJob,
+  ensureClientFormToken,
+  clientFormUrl,
+  getJobByFormToken,
+  submitClientForm,
   notifyAgentQueue,
   classify,
   normalizeSiteShape,

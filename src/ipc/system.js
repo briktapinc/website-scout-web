@@ -13,7 +13,7 @@ const path = require('path');
 
 // Secrets may ONLY be written via settings:setSecret and are never returned
 // in cleartext by settings:getAll (they come back as "***" when set).
-const SECRET_KEYS = ['ai.api_key', 'smtp.pass', 'mail.imap.pass', 'cf.api_token', 'pexels.api_key', 'mcp.http_token', 'providers.tavily.api_key', 'fal.api_key'];
+const SECRET_KEYS = ['ai.api_key', 'smtp.pass', 'mail.imap.pass', 'cf.api_token', 'pexels.api_key', 'mcp.http_token', 'providers.tavily.api_key', 'fal.api_key', 'meta.app_secret', 'sms.auth_token', 'sms.api_key', 'design.agent_webhook_secret'];
 
 // Keys writable via settings:set (secrets and automation_paused excluded).
 const SETTABLE_KEYS = [
@@ -64,6 +64,20 @@ const SETTABLE_KEYS = [
   'design.agent_webhook_secret',
   'design.learning.enabled',
   'design.learning.max_playbook',
+  'meta.app_id',
+  'social.image_price_usd',
+  'sms.enabled',
+  'sms.provider',
+  'sms.account_sid',
+  'sms.from_number',
+  'sms.webhook_url',
+  'hands_off.enabled',
+  'hands_off.min_score',
+  'hands_off.max_sites_per_day',
+  'hands_off.report_email',
+  'hands_off.followup_days',
+  'hands_off.template_id',
+  'hands_off.channel',
 ];
 
 const TASK_KEYS = ['research', 'generation', 'scoring', 'email', 'qa', 'editor', 'followup', 'image', 'vision'];
@@ -188,7 +202,7 @@ function validateSetting(key, raw) {
     }
     case 'app.name':
       if (value.length > 100) return fail('must be 100 chars or fewer');
-      return { ok: true, value: value.trim() || 'Website Scout' };
+      return { ok: true, value: value.trim() || 'Bitpype' };
     case 'cf.account_id':
       if (value.trim() !== '' && !/^[0-9a-fA-F]{32}$/.test(value.trim())) {
         return fail('must be a 32-character hex account ID or empty');
@@ -254,6 +268,45 @@ function validateSetting(key, raw) {
       const n = toInt(value);
       if (n === null || n < 4 || n > 60) return fail('must be an integer between 4 and 60');
       return { ok: true, value: String(n) };
+    }
+    case 'meta.app_id':
+      if (value.length > 64) return fail('must be 64 chars or fewer');
+      if (value.trim() !== '' && !/^\d+$/.test(value.trim())) return fail('must be a numeric Meta App ID or empty');
+      return { ok: true, value: value.trim() };
+    case 'hands_off.enabled': {
+      const v = String(value).trim().toLowerCase();
+      if (['1', 'true', 'yes'].includes(v)) return { ok: true, value: '1' };
+      if (['0', 'false', 'no', ''].includes(v)) return { ok: true, value: '0' };
+      return fail('must be boolean-like (0/1)');
+    }
+    case 'hands_off.min_score': {
+      const n = toInt(value);
+      if (n === null || n < 0 || n > 100) return fail('must be an integer 0-100');
+      return { ok: true, value: String(n) };
+    }
+    case 'hands_off.max_sites_per_day': {
+      const n = toInt(value);
+      if (n === null || n < 0 || n > 1000) return fail('must be an integer between 0 and 1000');
+      return { ok: true, value: String(n) };
+    }
+    case 'hands_off.report_email':
+      if (value.trim() !== '' && !isEmail(value)) return fail('must be a valid email address or empty');
+      return { ok: true, value: value.trim() };
+    case 'hands_off.followup_days': {
+      const n = toInt(value);
+      if (n === null || n < 1 || n > 90) return fail('must be an integer between 1 and 90');
+      return { ok: true, value: String(n) };
+    }
+    case 'hands_off.template_id': {
+      if (value.trim() === '') return { ok: true, value: '' };
+      const n = toInt(value);
+      if (n === null || n < 1) return fail('must be a positive integer or empty');
+      return { ok: true, value: String(n) };
+    }
+    case 'hands_off.channel': {
+      const v = String(value).trim().toLowerCase();
+      if (['email', 'sms', 'both', ''].includes(v)) return { ok: true, value: v || 'both' };
+      return fail('must be email, sms, or both');
     }
     default:
       return { ok: false, error: `No validator for setting "${key}".` };
@@ -410,7 +463,7 @@ function register(ipcMain, db) {
       const ai = require('../ai');
       if (typeof ai.setDb === 'function') ai.setDb(db);
       const configured = !!(ai.aiConfigured && ai.aiConfigured());
-      const modelImage = getSetting('ai.model.image') || 'gpt-image-1';
+      const modelImage = getSetting('ai.model.image') || 'gpt-image-2.5-sunburst';
       const modelDefault = getSetting('ai.model.default') || 'gpt-4o-mini';
       return { ok: true, configured, modelImage, modelDefault };
     } catch (e) {
@@ -627,4 +680,4 @@ function hookQuit() {
 }
 hookQuit();
 
-module.exports = { register, SETTABLE_KEYS, SECRET_KEYS, TASK_KEYS };
+module.exports = { register, SETTABLE_KEYS, SECRET_KEYS, TASK_KEYS, validateSetting };

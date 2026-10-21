@@ -67,6 +67,13 @@ function register(ipcMain, db) {
     return outreach.setCampaignStatus(gdb(), num(a.id, 'campaign id'), str(a.status, 'status', { max: 20 }));
   });
 
+  ipcMain.handle('campaigns:cancel', (_e, args = {}) => {
+    const a = args || {};
+    return outreach.cancelCampaign(gdb(), num(a.id, 'campaign id'));
+  });
+
+  ipcMain.handle('campaigns:delete', (_e, id) => outreach.deleteCampaign(gdb(), num(id, 'campaign id')));
+
   ipcMain.handle('campaigns:messages', (_e, args = {}) => {
     const a = args || {};
     return outreach.listMessages(
@@ -85,8 +92,11 @@ function register(ipcMain, db) {
     return outreach.saveTemplate(gdb(), {
       id: a.id === undefined || a.id === null ? undefined : num(a.id, 'template id'),
       name: str(a.name, 'name', { max: 200 }),
-      subject: str(a.subject, 'subject', { max: 500 }),
-      body: str(a.body, 'body', { max: 100000 }),
+      subject: a.subject == null ? '' : str(a.subject, 'subject', { max: 500 }),
+      body: a.body == null ? '' : str(a.body, 'body', { max: 100000 }),
+      sms_body: a.sms_body == null && a.smsBody == null
+        ? ''
+        : str(a.sms_body != null ? a.sms_body : a.smsBody, 'sms_body', { max: 1600 }),
     });
   });
 

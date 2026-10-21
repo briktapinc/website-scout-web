@@ -11,3 +11,18 @@ PATCHES.md
 Website Scout.lnk
 *.sqlite
 agent-transcripts
+
+outputs
+node_modules
+.env.*
+!.env.example
+tmp-deploy-tools
+.github
+*.tar.gz
+Dockerfile.security-*
+baseline-*.txt
+
+*.pem
+*.key
+backups
+.aws

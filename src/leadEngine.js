@@ -390,13 +390,19 @@ async function discoverLeads(db, opts = {}) {
     await provider.search(opts); // throws PROVIDER_NOT_CONFIGURED
   }
   const limit = Math.min(50, Math.max(1, Number(opts.limit) || 10));
-  const query = String(opts.query || opts.category || 'business').trim() || 'business';
-  const category = String(opts.category || query).trim();
+  const rawCategory = String(opts.category != null ? opts.category : (opts.query || '')).trim();
+  const anyCategory = !rawCategory || rawCategory === '*' || /^any$/i.test(rawCategory);
+  // "*" / "any" / blank → broad local-business search; don't store "*" as the niche.
+  const query = anyCategory
+    ? 'local business'
+    : (String(opts.query || rawCategory || 'business').trim() || 'business');
+  const category = anyCategory ? '' : rawCategory;
   const location = String(opts.location || 'Springfield').trim() || 'Springfield';
   const scoreAfter = opts.score !== false;
   const websitePresence = normalizeWebsitePresence(opts.websitePresence);
-  const leadGroup = normalizeGroupName(opts.group || opts.lead_group) || defaultDiscoverGroup(category, location);
-  const autoTags = [category, location].map((t) => String(t).trim()).filter(Boolean);
+  const leadGroup = normalizeGroupName(opts.group || opts.lead_group)
+    || defaultDiscoverGroup(anyCategory ? 'Any' : category, location);
+  const autoTags = [anyCategory ? 'any' : category, location].map((t) => String(t).trim()).filter(Boolean);
 
   // Over-fetch when post-filtering by website presence (providers rarely support it natively).
   const fetchLimit = websitePresence
@@ -1039,9 +1045,10 @@ async function researchLead(db, id) {
     // src/ai.js is owned by another workstream and may not exist yet.
     try {
       const ai = require('./ai.js');
-      if (ai && typeof ai.aiConfigured === 'function' && ai.aiConfigured()) {
+      if (ai && typeof ai.aiConfigured === 'function' && ai.aiConfigured(db)) {
         const res = await ai.chat({
           task: 'research',
+          db,
           messages: [
             { role: 'system', content: 'Write a short, friendly marketing description (2-3 sentences) for a local business website. Do NOT invent factual claims (founding year, awards, service areas) — only generic, clearly promotional language.' },
             { role: 'user', content: `Business: ${lead.business_name} (${lead.category || 'local business'}). Known: ${norm.description || 'no description available'}.` },

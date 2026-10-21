@@ -1,0 +1,30 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
+process.env.APP_URL='https://bitpype.test';
+const root=path.resolve(process.env.BITPYPE_TEST_ROOT||path.join(__dirname,'..'));
+const engine=require(path.join(root,'src/websiteEngine'));
+const security=require(path.join(root,'server/previewSecurity'));
+const checks=[];
+function test(name,fn){fn();checks.push(name);}
+test('marked inline scripts never survive',()=>{for(const marker of ['form','chat','module','future']) assert(!engine.sanitizeHtml(`<script data-bitpype-${marker}-script="1">window.owned=1</script>`).includes('script'));});
+test('unknown loader origins and paths are removed',()=>{for(const src of ['https://evil.test/js/form-embed.js','https://bitpype.test.evil.test/js/chat-embed.js','javascript:alert(1)','data:text/javascript,alert(1)','//bitpype.test/js/form-embed.js','https://bitpype.test/js/unknown-embed.js','https://bitpype.test/js/form-embed.js?evil=1','https://bitpype.test/js/form-embed.js#x'])assert(!engine.sanitizeHtml(`<script data-bitpype-form-script src="${src}">evil</script>`).includes('<script'));});
+test('approved loaders are reconstructed without author body or attributes',()=>{for(const file of ['form','chat','module']){const output=engine.sanitizeHtml(`<script src="https://bitpype.test/js/${file}-embed.js" type="module" onload="evil()" data-evil="1">evil()</script>`);assert.equal(output,`<script src="https://bitpype.test/js/${file}-embed.js" defer data-bitpype-${file}-script="1"></script>`);}});
+test('mount recovery never trusts author API origins',()=>{const output=engine.sanitizeHtml('<div class="bitpype-form-embed" data-bitpype-api="https://evil.test"></div>');assert(output.includes('src="https://bitpype.test/js/form-embed.js"'));assert(!output.includes('src="https://evil.test'));});
+test('relative approved loaders and token mounts survive',()=>{const output=engine.sanitizeHtml('<div class="bitpype-form-embed" data-token="fixture"></div><script src="/js/form-embed.js"></script>');assert(output.includes('data-token="fixture"'));assert(output.includes('src="https://bitpype.test/js/form-embed.js"'));});
+test('placeholder injection is inert',()=>{assert(!engine.sanitizeHtml('\u0000BPSCRIPT0\u0000<script data-bitpype-form-script>evil()</script>').includes('<script'));});
+test('private opaque requests rejected and credentials stripped',()=>{for(const url of ['/api/v1/portal/site/theme','/api/v1/jobs','/api/v1/admin','/mcp','/authorize','/oauth/token']){const req={path:url,headers:{origin:'null',cookie:'synthetic',authorization:'Bearer synthetic'}},res={status(n){this.statusCode=n;return this;},json(body){this.body=body;}};let next=false;security.rejectOpaqueAppRequests(req,res,()=>next=true);assert.equal(res.statusCode,403);assert.equal(next,false);assert(!req.headers.cookie);assert(!req.headers.authorization);}});
+test('public opaque token APIs stay usable without credentials',()=>{for(const url of ['/api/v1/forms/public/fixture','/api/v1/chat/public/fixture/session','/api/v1/modules/public/fixture','/api/v1/outreach/public/claim/fixture','/api/v1/captcha/config']){const req={path:url,headers:{origin:'null',cookie:'synthetic'}},res={};let next=false;security.rejectOpaqueAppRequests(req,res,()=>next=true);assert(next);assert(!req.headers.cookie);}});
+test('same-origin and service clients unchanged',()=>{for(const origin of [undefined,'https://bitpype.test']){const req={path:'/api/v1/jobs',headers:{origin,cookie:'synthetic'}};let next=false;security.rejectOpaqueAppRequests(req,{},()=>next=true);assert(next);assert.equal(req.headers.cookie,'synthetic');}});
+test('fallback responses enforce opaque sandbox outside iframe',()=>{const headers={};security.isolateStaticPreview({}, {setHeader(k,v){headers[k]=v;}},()=>{});assert(headers['Content-Security-Policy'].includes('sandbox allow-scripts allow-forms;'));assert(!headers['Content-Security-Policy'].includes('allow-same-origin'));});
+test('active and legacy frame declarations cannot share origin',()=>{for(const file of ['public/js/portal.js','public/js/portal.vps.js','public/js/app.js']){const source=fs.readFileSync(path.join(root,file),'utf8');assert(!source.includes('allow-same-origin'));}});
+test('parent rejects foreign frames, wrong origins and unknown operations',()=>{
+ const source=fs.readFileSync(path.join(root,'public/js/portal.js'),'utf8'),a=source.indexOf("  window.addEventListener('message', (ev) => {"),b=source.indexOf('  function daysInMonth',a);
+ let handler,mutations=0;const frame={contentWindow:{}},state={previewFrame:frame,siteEditable:true,editMode:false,pendingEdits:new Map()};
+ const context={window:{addEventListener(name,fn){handler=fn;}},state,Number,String,document:{getElementById(){return null;}},handlePreviewNavMessage(){},postEditModeToFrame(){},updateEditBar(){},handleListMutate(){mutations++;},LOCKED_EDIT_PATH:/locked/};
+ vm.runInNewContext(source.slice(a,b),context);
+ const event={source:frame.contentWindow,origin:'null',data:{source:'ws-preview',type:'list-mutate',action:'add'}};
+ handler(event);assert.equal(mutations,0);state.editMode=true;
+ handler({...event,source:{}});handler({...event,origin:'https://bitpype.test'});handler({...event,data:{source:'ws-preview',type:'unknown',id:'0:1:title',text:'evil'}});handler({...event,data:{...event.data,action:'unknown'}});assert.equal(mutations,0);assert.equal(state.pendingEdits.size,0);
+ handler(event);assert.equal(mutations,1);
+});
+console.log(JSON.stringify({passed:true,groups:checks.length,checks}));

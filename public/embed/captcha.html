@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Captcha</title>
+  <style>
+    html, body { margin: 0; padding: 0; background: transparent; }
+    #box { display: inline-block; min-height: 65px; }
+  </style>
+</head>
+<body>
+  <div id="box"></div>
+  <script>
+    (function () {
+      var widgetId = null;
+      var box = document.getElementById('box');
+      var params = new URLSearchParams(location.search);
+      var theme = params.get('theme') === 'dark' ? 'dark' : 'light';
+
+      function post(msg) {
+        try {
+          parent.postMessage(Object.assign({ type: 'bitpype-captcha' }, msg), '*');
+        } catch (e) { /* ignore */ }
+      }
+
+      function reportSize() {
+        var h = Math.max(65, (box && box.offsetHeight) || 65);
+        post({ event: 'resize', height: h + 8 });
+      }
+
+      function loadTurnstile() {
+        return new Promise(function (resolve, reject) {
+          if (window.turnstile) return resolve();
+          var s = document.createElement('script');
+          s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+          s.async = true;
+          s.onload = function () { resolve(); };
+          s.onerror = function () { reject(new Error('Could not load captcha')); };
+          document.head.appendChild(s);
+        });
+      }
+
+      async function boot() {
+        var cfgRes = await fetch('/api/v1/captcha/config', { credentials: 'omit' });
+        var cfgJson = await cfgRes.json();
+        var cfg = (cfgJson && cfgJson.ok && cfgJson.data) || { enabled: false, siteKey: '' };
+        if (!cfg.enabled || !cfg.siteKey) {
+          post({ event: 'disabled' });
+          return;
+        }
+        await loadTurnstile();
+        widgetId = window.turnstile.render(box, {
+          sitekey: cfg.siteKey,
+          theme: theme,
+          callback: function (token) {
+            post({ event: 'token', token: String(token || '') });
+            reportSize();
+          },
+          'expired-callback': function () {
+            post({ event: 'expired' });
+          },
+          'error-callback': function () {
+            post({ event: 'error', message: 'Captcha failed to load' });
+          },
+        });
+        post({ event: 'ready' });
+        reportSize();
+        setTimeout(reportSize, 300);
+      }
+
+      window.addEventListener('message', function (ev) {
+        var data = ev && ev.data;
+        if (ev.source !== parent) return;
+        if (!data || data.type !== 'bitpype-captcha') return;
+        if (data.event === 'reset' && window.turnstile && widgetId != null) {
+          try { window.turnstile.reset(widgetId); } catch (e) { /* ignore */ }
+          post({ event: 'expired' });
+        }
+        if (data.event === 'ping') post({ event: 'pong' });
+      });
+
+      boot().catch(function (e) {
+        post({ event: 'error', message: (e && e.message) || 'Captcha failed' });
+      });
+    })();
+  </script>
+</body>
+</html>

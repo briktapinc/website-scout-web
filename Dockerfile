@@ -1,13 +1,47 @@
-FROM node:22-bookworm-slim
+FROM node:22.23.3-bookworm-slim@sha256:efd0ab5780c2d9ab1f0f869571a00d5edb17793bff4cce4a2792e3eb0ffc7562 AS runtime
+ARG SOURCE_DATE_EPOCH=1792454400
+ARG DEBIAN_SNAPSHOT=20261020T000000Z
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+COPY deploy/fetch-snapshot-packages.cjs /usr/local/lib/bitpype-fetch-snapshot-packages.cjs
+
+# Native build tools + Chromium for site preview screenshots (Puppeteer).
+# Bootstrap HTTPS trust from the CA roots embedded in the pinned Node image.
+# Debian's ca-certificates package replaces this bundle during the install.
+RUN mkdir -p /etc/ssl/certs \
+    && node -e 'require("fs").writeFileSync("/etc/ssl/certs/ca-certificates.crt",require("tls").rootCertificates.join("\n")+"\n")' \
+    && rm -f /etc/apt/sources.list.d/debian.sources \
+    && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s bookworm main\ndeb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/%s bookworm-security main\n' "$DEBIAN_SNAPSHOT" "$DEBIAN_SNAPSHOT" > /etc/apt/sources.list \
+    && timeout 180 apt-get -o Acquire::Retries=1 -o Acquire::https::Timeout=15 -o Acquire::Languages=none -o Acquire::CompressionTypes::Order::=gz -o APT::Update::Error-Mode=any update && node /usr/local/lib/bitpype-fetch-snapshot-packages.cjs \
     python3 make g++ \
+    chromium \
+    fonts-liberation \
+    fonts-noto-color-emoji \
+    ca-certificates \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libgbm1 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+COPY package.json package-lock.json ./
+COPY vendor ./vendor
+RUN npm ci --omit=dev --no-audit --fund=false
 
 COPY server.js ./
 COPY server ./server
@@ -18,6 +52,20 @@ COPY scripts ./scripts
 
 ENV NODE_ENV=production
 ENV DB_DRIVER=mysql
+ENV EXPORT_ROOT=/var/lib/website-scout-exports
+ENV WORKSPACE_DATA_DIR=/app/data/workspaces
+
+RUN mkdir -p /var/lib/website-scout-exports /app/data/workspaces \
+  && chown -R node:node /app /var/lib/website-scout-exports
+
+USER node
+
 EXPOSE 3000
 
 CMD ["node", "server.js"]
+
+FROM runtime AS test
+COPY --chown=node:node tests ./tests
+RUN node tests/run-regressions.cjs
+
+FROM runtime AS production

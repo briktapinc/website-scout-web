@@ -19,6 +19,7 @@
 const net = require('node:net');
 const tls = require('node:tls');
 const crypto = require('node:crypto');
+const { ensureBrandedEmail, stripHtml: stripHtmlBranded } = require('./emailTemplate');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const CONNECT_TIMEOUT_MS = 15000;
@@ -79,6 +80,9 @@ function buildMime({ fromName, fromEmail, to, subject, html, text }) {
     `Subject: ${encodeSubject(subject || '')}`,
     `Date: ${date}`,
     `Message-ID: ${msgId}`,
+    // One-click / mailto unsubscribe helps inbox placement for bulk-ish mail.
+    `List-Unsubscribe: <mailto:${fromEmail}?subject=unsubscribe>`,
+    'List-Unsubscribe-Post: List-Unsubscribe=One-Click',
     'MIME-Version: 1.0',
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
     '',
@@ -108,17 +112,7 @@ function encodeSubject(s) {
 }
 
 function stripHtml(html) {
-  return String(html)
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|h[1-6]|li|tr)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  return stripHtmlBranded(html);
 }
 
 function escapeHtml(s) {
@@ -258,21 +252,43 @@ class SmtpProvider {
     this.name = 'smtp';
   }
 
-  async send({ to, subject, html, text }) {
+  async send({ to, subject, html, text, title, cta, ctaLabel, preheader, footerNote, skipBrand }) {
     if (!isValidEmail(to)) throw new Error(`Invalid recipient email: ${to}`);
+    let outHtml = html;
+    let outText = text;
+    if (!skipBrand) {
+      const branded = ensureBrandedEmail({
+        subject,
+        title,
+        html,
+        text,
+        cta,
+        ctaLabel,
+        preheader,
+        footerNote,
+      });
+      outHtml = branded.html;
+      outText = branded.text;
+    }
     const data = buildMime({
       fromName: this.cfg.fromName,
       fromEmail: this.cfg.fromEmail,
       to: to.trim(),
       subject,
-      html,
-      text,
+      html: outHtml,
+      text: outText,
     });
+    const msgIdMatch = /Message-ID:\s*(<[^>]+>)/i.exec(data);
     const client = new SmtpClient(this.cfg);
     try {
       await client.connect();
       const response = await client.sendMail({ fromEmail: this.cfg.fromEmail, to: to.trim(), data });
-      return { ok: true, provider: 'smtp', response };
+      return {
+        ok: true,
+        provider: 'smtp',
+        response,
+        messageId: msgIdMatch ? msgIdMatch[1] : undefined,
+      };
     } finally {
       await client.quit();
     }
@@ -311,10 +327,67 @@ function getProvider(settings, db) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Email HTML sanitizer (templates / outbound fragments)                 */
+/* ------------------------------------------------------------------ */
+
+const EMAIL_ALLOWED_TAGS = new Set([
+  'a', 'b', 'strong', 'i', 'em', 'u', 'p', 'br', 'ul', 'ol', 'li',
+  'h1', 'h2', 'h3', 'h4', 'div', 'span', 'img', 'blockquote', 'hr',
+]);
+
+/**
+ * Strip unsafe markup from staff email templates before save/send.
+ * Allows a small HTML subset suitable for multipart HTML mail.
+ */
+function sanitizeEmailHtml(html) {
+  let s = String(html == null ? '' : html);
+  if (s.length > 200000) s = s.slice(0, 200000);
+  s = s.replace(/<script\b[\s\S]*?<\/script>/gi, '');
+  s = s.replace(/<\/?script\b[^>]*>/gi, '');
+  s = s.replace(/<style\b[\s\S]*?<\/style>/gi, '');
+  s = s.replace(/<\/?(iframe|object|embed|base|form|input|button|textarea|select|meta|link)[\s\S]*?>/gi, '');
+  s = s.replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+  s = s.replace(/<\/?([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g, (full, tag, attrs) => {
+    const name = String(tag).toLowerCase();
+    const closing = full.startsWith('</');
+    if (!EMAIL_ALLOWED_TAGS.has(name)) return '';
+    if (closing) return `</${name}>`;
+    if (name === 'br' || name === 'hr') return `<${name}>`;
+    if (name === 'img') {
+      const srcM = /\bsrc\s*=\s*(['"])(https?:\/\/[^'"]+)\1/i.exec(attrs);
+      if (!srcM) return '';
+      const altM = /\balt\s*=\s*(['"])([^'"]*)\1/i.exec(attrs);
+      const wM = /\bwidth\s*=\s*(['"]?)(\d+)\1/i.exec(attrs);
+      const hM = /\bheight\s*=\s*(['"]?)(\d+)\1/i.exec(attrs);
+      let out = `<img src="${srcM[2]}"`;
+      if (altM) out += ` alt="${altM[2].replace(/"/g, '')}"`;
+      if (wM) out += ` width="${wM[2]}"`;
+      if (hM) out += ` height="${hM[2]}"`;
+      out += ' style="max-width:100%;height:auto;">';
+      return out;
+    }
+    if (name === 'a') {
+      const hrefM = /\bhref\s*=\s*(['"])(https?:\/\/[^'"]+|mailto:[^'"]+|tel:[^'"]+)\1/i.exec(attrs);
+      if (!hrefM) return '<a>';
+      return `<a href="${hrefM[2]}" style="color:#0b5442;text-decoration:underline;">`;
+    }
+    return `<${name}>`;
+  });
+  s = s.replace(/\s(href|src|action)\s*=\s*(['"])\s*javascript:[^'"]*\2/gi, ' $1="#"');
+  return s;
+}
+
+/** True when a string looks like an HTML fragment (not plain text). */
+function looksLikeHtml(s) {
+  return typeof s === 'string' && /<\/?[a-z][\s\S]*>/i.test(s);
+}
+
+/* ------------------------------------------------------------------ */
 /* Template personalization (anti-hallucination)                        */
 /* ------------------------------------------------------------------ */
 
 // Variables that may come straight from lead columns.
+// Extra vars (website_link, preview_url, from_name, interested, uninterested) via `extra`.
 const LEAD_VARS = [
   'business_name', 'category', 'phone', 'email', 'website', 'address',
   'city', 'state', 'postal_code', 'country', 'rating', 'review_count',
@@ -394,5 +467,7 @@ module.exports = {
   StubProvider,
   getProvider,
   personalize,
+  sanitizeEmailHtml,
+  looksLikeHtml,
   LEAD_VARS,
 };

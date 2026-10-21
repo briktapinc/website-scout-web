@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BitPype — We'll handle the website</title>
+  <meta name="description" content="BitPype handles your website with you, so you can run the business. You can still preview it, change it, and keep the client portal." />
+  <link rel="icon" href="/brand/bitpype-mark.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,700;1,9..144,500&family=Figtree:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #1c140f;
+      --muted: #5c5148;
+      --cream: #f4efe6;
+      --paper: #fffaf4;
+      --teal: #0e7a68;
+      --coral: #c44732;
+      --gold: #f0b429;
+      --line: rgba(28, 20, 15, 0.12);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: Figtree, sans-serif;
+      background:
+        radial-gradient(880px 420px at 100% -8%, rgba(239, 93, 69, 0.14), transparent 58%),
+        radial-gradient(720px 380px at -12% 8%, rgba(14, 122, 104, 0.1), transparent 52%),
+        var(--cream);
+      overflow-x: clip;
+      line-height: 1.5;
+    }
+    a { color: inherit; }
+    img { display: block; max-width: 100%; }
+    :focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+    .skip {
+      position: absolute; left: -999px; top: 8px; background: #fff; color: #000; padding: 8px 12px; z-index: 50;
+    }
+    .skip:focus { left: 12px; }
+
+    .nav {
+      position: sticky; top: 0; z-index: 20;
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+      gap: 10px 18px;
+      padding: 16px 28px;
+      background: rgba(244, 239, 230, 0.92);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid transparent;
+    }
+    .logo {
+      display: inline-flex; align-items: center; gap: 10px;
+      text-decoration: none; color: var(--ink);
+      font-family: Fraunces, Georgia, serif; font-weight: 700; font-size: 1.4rem; letter-spacing: -0.03em;
+      min-width: 0;
+    }
+    .logo img { width: 36px; height: 36px; border-radius: 10px; flex: none; }
+    .nav-links {
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end;
+      gap: 8px 16px;
+    }
+    .nav-links a { color: var(--ink); text-decoration: none; font-weight: 700; }
+    .nav-links a:hover { color: var(--coral); }
+    .nav-login {
+      background: var(--ink); color: var(--paper) !important;
+      padding: 8px 14px; border-radius: 999px;
+    }
+    .nav-login:hover { color: #fff !important; }
+
+    .hero {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 64px 28px 28px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(240px, 0.85fr);
+      gap: 48px 64px;
+      align-items: center;
+    }
+    .kicker {
+      margin: 0 0 18px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-size: 0.78rem;
+      color: var(--coral);
+    }
+    h1 {
+      margin: 0 0 22px;
+      font-family: Fraunces, Georgia, serif;
+      font-weight: 500;
+      font-size: clamp(2.7rem, 6.2vw, 5.35rem);
+      line-height: 0.96;
+      letter-spacing: -0.045em;
+      overflow-wrap: break-word;
+    }
+    h1 em {
+      font-style: italic;
+      font-weight: 500;
+      color: var(--coral);
+    }
+    .lede {
+      margin: 0 0 28px;
+      max-width: 38ch;
+      color: var(--muted);
+      font-size: 1.18rem;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px 18px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 52px;
+      padding: 0 18px;
+      border-radius: 999px;
+      text-decoration: none;
+      font-weight: 700;
+      max-width: 100%;
+    }
+    .btn-primary { background: var(--ink); color: var(--paper); }
+    .btn-primary:hover { background: #2c211b; }
+    .btn-secondary {
+      background: transparent;
+      color: var(--ink);
+      border: 1.5px solid rgba(28, 20, 15, 0.22);
+    }
+    .btn-secondary:hover { border-color: var(--ink); }
+    .login-link { font-weight: 700; color: var(--teal); text-underline-offset: 3px; }
+    .login-link:hover { color: var(--coral); }
+
+    .poster {
+      position: relative;
+      margin: 0;
+      width: min(100%, 420px);
+      justify-self: end;
+      min-height: 460px;
+      padding: 32px 30px 36px;
+      border-radius: 32px;
+      color: var(--paper);
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      overflow: hidden;
+      background:
+        radial-gradient(280px 220px at 88% 108%, rgba(240, 180, 41, 0.55), transparent 62%),
+        radial-gradient(240px 200px at 0% 0%, rgba(239, 93, 69, 0.38), transparent 58%),
+        linear-gradient(165deg, #3a241c 0%, #1c3d36 72%);
+      box-shadow: 0 28px 60px rgba(58, 32, 18, 0.16);
+    }
+    .poster-glow {
+      position: absolute;
+      width: 240px;
+      height: 240px;
+      right: -48px;
+      bottom: -36px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(240, 180, 41, 0.5), transparent 68%);
+      animation: drift 12s ease-in-out infinite alternate;
+      pointer-events: none;
+    }
+    @keyframes drift {
+      from { transform: translate(0, 0); }
+      to { transform: translate(-28px, -20px); }
+    }
+    .poster-kicker, .poster-name, .poster-line { position: relative; z-index: 1; }
+    .poster-kicker {
+      margin: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-size: 0.78rem;
+    }
+    .poster-kicker i {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--gold); display: block;
+    }
+    .poster-name {
+      margin: 48px 0 14px;
+      font-family: Fraunces, Georgia, serif;
+      font-weight: 500;
+      font-size: clamp(3rem, 5vw, 4.3rem);
+      line-height: 0.9;
+      letter-spacing: -0.045em;
+    }
+    .poster-line {
+      margin: 0;
+      max-width: 18ch;
+      color: rgba(255, 250, 244, 0.82);
+      font-size: 1.05rem;
+    }
+
+    .points {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 36px 28px 88px;
+      list-style: none;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 28px 40px;
+      border-top: 1px solid var(--line);
+    }
+    .points li { margin: 0; min-width: 0; }
+    .points span {
+      display: block;
+      margin-bottom: 8px;
+      font-family: Fraunces, Georgia, serif;
+      color: var(--coral);
+      font-weight: 700;
+    }
+    .points h2 {
+      margin: 0 0 8px;
+      font-family: Fraunces, Georgia, serif;
+      font-weight: 500;
+      font-size: 1.7rem;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+    }
+    .points p { margin: 0; color: var(--muted); }
+
+    footer {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 8px 28px 40px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 24px;
+      justify-content: space-between;
+      align-items: flex-start;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+    }
+    footer strong {
+      font-family: Fraunces, Georgia, serif;
+      color: var(--ink);
+      font-size: 1.25rem;
+    }
+    footer p { margin: 4px 0 0; }
+    footer nav { display: flex; flex-wrap: wrap; gap: 10px 16px; }
+    footer a { color: var(--muted); text-decoration: none; font-weight: 700; }
+    footer a:hover { color: var(--ink); }
+
+    @media (max-width: 860px) {
+      .nav { padding: 14px 16px; }
+      .hero {
+        grid-template-columns: minmax(0, 1fr);
+        padding: 32px 16px 20px;
+        gap: 32px;
+      }
+      .poster { justify-self: start; min-height: 380px; }
+      .points {
+        grid-template-columns: minmax(0, 1fr);
+        padding: 28px 16px 56px;
+        gap: 28px;
+      }
+      footer { padding: 20px 16px 36px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+      html { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="nav">
+    <a class="logo" href="/"><img src="/brand/bitpype-mark.svg" alt="" width="36" height="36" /> BitPype</a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="/how">How it works</a>
+      <a href="/portal" class="nav-login">Client login</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div>
+        <p class="kicker">For owners with a full day already</p>
+        <h1 id="offer">We'll handle the website.<br /><em>You run the business.</em></h1>
+        <p class="lede">You should not have to learn a second job just to have a site. We design it and look after it with you. When you want to see it, change something, or read a note from a customer, you can — without becoming the person who manages the website.</p>
+        <div class="actions">
+          <a class="btn btn-primary" href="mailto:team@bitpype.com?subject=BitPype%20support">Email team@bitpype.com</a>
+          <a class="btn btn-secondary" href="/how">How it works</a>
+          <a class="login-link" href="/portal">Client login</a>
+        </div>
+      </div>
+      <figure class="poster" aria-hidden="true">
+        <div class="poster-glow"></div>
+        <p class="poster-kicker"><i></i> Open today</p>
+        <p class="poster-name">Harbor<br />&amp; Rye</p>
+        <p class="poster-line">A neighborhood shop, with the website looked after.</p>
+      </figure>
+    </section>
+
+    <ol class="points">
+      <li>
+        <span>01</span>
+        <h2>We build it</h2>
+        <p>We design the site around your business and put it together with you. The upkeep stays with us.</p>
+      </li>
+      <li>
+        <span>02</span>
+        <h2>You can change what you want</h2>
+        <p>Update the words, photos, logo, or colors. Or tell us the change, and we will make it.</p>
+      </li>
+      <li>
+        <span>03</span>
+        <h2>You are not locked out</h2>
+        <p>The client portal stays yours. Look at the site on a computer or a phone, and keep a hand on it while we handle the rest.</p>
+      </li>
+    </ol>
+  </main>
+
+  <footer>
+    <div>
+      <strong>BitPype</strong>
+      <p>The website, handled with you.</p>
+    </div>
+    <nav aria-label="Footer">
+      <a href="/how">How it works</a>
+      <a href="/portal">Client portal</a>
+      <a href="/app">Team login</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="mailto:team@bitpype.com">team@bitpype.com</a>
+    </nav>
+  </footer>
+</body>
+</html>

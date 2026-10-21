@@ -39,13 +39,16 @@ function register(ipcMain, db) {
     job: design.answerQuestion(db, Number(args.questionId), args.answer, args.fromEmail),
   })));
   ipcMain.handle('design:setContact', wrap((args = {}) => ({
-    job: design.setContactEmail(db, Number(args.id), args.email),
+    job: design.setContact(db, Number(args.id), {
+      email: args.email,
+      phone: args.phone != null ? args.phone : args.contact_phone,
+    }),
   })));
-  ipcMain.handle('design:emailQuestions', wrap((args = {}) => {
+  ipcMain.handle('design:emailQuestions', wrap(async (args = {}) => {
     const id = Number(args.jobId != null ? args.jobId : args.id);
     return design.emailQuestions(db, id);
   }));
-  ipcMain.handle('design:emailDelivery', wrap((args = {}) => {
+  ipcMain.handle('design:emailDelivery', wrap(async (args = {}) => {
     const id = Number(args.jobId != null ? args.jobId : args.id);
     return design.emailDelivery(db, id);
   }));
@@ -155,15 +158,45 @@ function register(ipcMain, db) {
   ipcMain.handle('design:renderHtml', wrap((args = {}) => {
     let pages = args.pages;
     let theme = args.theme || {};
+    let job = null;
     if (!Array.isArray(pages) || !pages.length) {
-      const job = design.getJob(db, Number(args.id));
+      job = design.getJob(db, Number(args.id));
       const payload = job.deliverable;
       if (!payload || !Array.isArray(payload.pages)) throw Object.assign(new Error('No website delivery yet.'), { code: 'NO_DELIVERY' });
       pages = payload.pages;
       theme = payload.theme || {};
+    } else if (args.id != null) {
+      try { job = design.getJob(db, Number(args.id)); } catch { /* optional */ }
+    }
+    // Prefer linked website freestyle CSS when deliverable theme lost customCss.
+    const websiteId = job && job.website_id != null ? Number(job.website_id) : null;
+    if (websiteId) {
+      try {
+        const site = engine.getWebsite(db, websiteId);
+        let siteTheme = site.theme;
+        if (typeof siteTheme === 'string') {
+          try { siteTheme = JSON.parse(siteTheme || 'null'); } catch { siteTheme = null; }
+        }
+        let sitePages = site.pages;
+        if (typeof sitePages === 'string') {
+          try { sitePages = JSON.parse(sitePages || 'null'); } catch { sitePages = null; }
+        }
+        if (!Array.isArray(args.pages) || !args.pages.length) {
+          if (Array.isArray(sitePages) && sitePages.length) pages = sitePages;
+          if (siteTheme && typeof siteTheme === 'object') {
+            const siteCssLen = typeof siteTheme.customCss === 'string' ? siteTheme.customCss.trim().length : 0;
+            const themeCssLen = typeof theme.customCss === 'string' ? theme.customCss.trim().length : 0;
+            if (siteCssLen && siteCssLen >= themeCssLen) theme = siteTheme;
+            else theme = design.mergeThemePreferCss(theme, siteTheme);
+          }
+        } else if (siteTheme) {
+          theme = design.mergeThemePreferCss(theme, siteTheme);
+        }
+      } catch { /* optional */ }
     }
     const opts = {
       editable: !!args.editable,
+      preview: true,
       pageSlug: args.pageSlug,
       pageIndex: Number.isInteger(args.pageIndex) ? args.pageIndex : (args.pageIndex != null ? Number(args.pageIndex) : undefined),
     };

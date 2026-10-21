@@ -6,6 +6,31 @@
  */
 window.ScoutApi = (() => {
   let workspaceId = null;
+  let onAuthRequired = null;
+
+  function responseError(res, data) {
+    const detail = data && data.error;
+    const nested = detail && typeof detail === 'object' ? detail : null;
+    const code = (nested && typeof nested.code === 'string' && nested.code)
+      || (data && typeof data.code === 'string' && data.code)
+      || (typeof detail === 'string' && /^[A-Z][A-Z0-9_]+$/.test(detail) && detail) || undefined;
+    const message = (typeof detail === 'string' && detail)
+      || (nested && typeof nested.message === 'string' && nested.message)
+      || res.statusText || `Request failed (${res.status})`;
+    const err = new Error(message);
+    err.status = res.status;
+    err.data = data;
+    err.code = code;
+    if (res.status === 401 && code === 'AUTH_REQUIRED' && typeof onAuthRequired === 'function') {
+      try { onAuthRequired(); } catch { /* ignore callback errors */ }
+    }
+    if (code === 'SUBSCRIPTION_REQUIRED') {
+      try {
+        if (!String(window.location.hash || '').startsWith('#/billing')) window.location.hash = '#/billing';
+      } catch { /* ignore navigation errors */ }
+    }
+    return err;
+  }
 
   function setWorkspaceId(id) {
     workspaceId = id ? Number(id) : null;
@@ -28,19 +53,8 @@ window.ScoutApi = (() => {
       body: opts.body != null ? JSON.stringify(opts.body) : undefined,
     }));
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.ok === false) {
-      const err = new Error((data && data.error) || res.statusText || 'Request failed');
-      err.status = res.status;
-      err.data = data;
-      err.code = data && data.code;
-      if (res.status === 402 || (data && data.code === 'SUBSCRIPTION_REQUIRED')) {
-        try {
-          if (typeof window !== 'undefined' && !String(window.location.hash || '').startsWith('#/billing')) {
-            window.location.hash = '#/billing';
-          }
-        } catch { /* ignore */ }
-      }
-      throw err;
+    if (!res.ok || (data && data.ok === false)) {
+      throw responseError(res, data);
     }
     return data;
   }
@@ -67,6 +81,7 @@ window.ScoutApi = (() => {
 
   return {
     request, qs, setWorkspaceId, getWorkspaceId,
+    setOnAuthRequired: (fn) => { onAuthRequired = fn; },
 
     // ---- auth ----
     me: () => get('/auth/me'),
@@ -74,8 +89,9 @@ window.ScoutApi = (() => {
     register: (body) => post('/auth/register', body),
     logout: () => post('/auth/logout', {}),
     selectWorkspace: (id) => post('/auth/workspace', { workspaceId: id }),
-    forgotPassword: (email) => post('/auth/forgot-password', { email }),
-    resetPassword: (token, password) => post('/auth/reset-password', { token, password }),
+    forgotPassword: (email, captchaToken) => post('/auth/forgot-password', { email, captchaToken }),
+    resetPassword: (token, password, captchaToken) => post('/auth/reset-password', { token, password, captchaToken }),
+    captchaConfig: () => get('/captcha/config'),
     acceptInvite: (token) => post('/auth/accept-invite', { token }),
 
     // ---- workspace invites ----
@@ -126,9 +142,15 @@ window.ScoutApi = (() => {
     designAsk: (id, question) => post('/design/' + id + '/ask', { question }),
     designAnswers: (id) => get('/design/' + id + '/answers'),
     designAnswer: (questionId, answer, fromEmail) => post('/design/answer', { questionId, answer, fromEmail }),
-    designContact: (id, email) => post('/design/' + id + '/contact', { email }),
+    designContact: (id, emailOrBody, phone) => {
+      const body = (emailOrBody != null && typeof emailOrBody === 'object')
+        ? emailOrBody
+        : { email: emailOrBody, phone };
+      return post('/design/' + id + '/contact', body || {});
+    },
     designEmailQuestions: (id) => post('/design/' + id + '/email-questions', {}),
     designEmailDelivery: (id) => post('/design/' + id + '/email-delivery', {}),
+    designClientForm: (id) => get('/design/' + id + '/client-form'),
     designReply: (id, reply, fromEmail) => post('/design/' + id + '/reply', { reply, fromEmail }),
     designReview: (id, body) => post('/design/' + id + '/review', body),
     designRedesign: (id, body) => post('/design/' + id + '/redesign', body),
@@ -162,23 +184,146 @@ window.ScoutApi = (() => {
     // ---- websites ----
     websites: (q) => get('/websites', q),
     websiteGet: (id) => get('/websites/' + id),
+    websiteDelete: (id) => del('/websites/' + id),
     websiteByLead: (leadId) => get('/websites/by-lead/' + leadId),
     generateSite: (body) => post('/websites/generate', body),
     websiteSave: (id, body) => put('/websites/' + id, body),
+    websiteStructure: (id) => get('/websites/' + id + '/structure'),
+    websiteReorderStructure: (id, body) => post('/websites/' + id + '/structure', body),
+    websiteScreenshots: (id, q) => get('/websites/' + id + '/screenshots', q),
+    websiteScreenshotsCapture: (id, body) => post('/websites/' + id + '/screenshots/capture', body || {}),
+    screenshots: (q) => get('/screenshots', q),
     websiteRender: (id, body) => post('/websites/' + id + '/render', body),
     websiteRenderPages: (body) => post('/websites/render', body),
-    websitePreview: (id, open) => post('/websites/' + id + '/preview', { open: !!open }),
+    websitePreview: (id, open, opts = {}) => post('/websites/' + id + '/preview', {
+      open: !!open,
+      force: !!(opts && opts.force),
+    }),
     websiteQa: (id) => post('/websites/' + id + '/qa', {}),
     websiteExport: (id) => post('/websites/' + id + '/export', {}),
+    /** Site + claim URLs with QR data-URLs. */
+    websiteClaimKit: (id) => get('/websites/' + id + '/claim-kit'),
+    /** Download 4×6 postcard PDF (site + claim QRs). */
+    websitePostcard: async (id) => {
+      const headers = {};
+      const ws = getWorkspaceId();
+      if (ws) headers['X-Workspace-Id'] = String(ws);
+      const res = await fetch(V + '/websites/' + id + '/postcard', {
+        method: 'GET',
+        credentials: 'include',
+        headers,
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw responseError(res, data);
+      }
+      const cd = res.headers.get('Content-Disposition') || '';
+      let filename = 'bitpype-postcard.pdf';
+      const m = /filename="([^"]+)"/i.exec(cd) || /filename=([^;]+)/i.exec(cd);
+      if (m && m[1]) filename = m[1].trim().replace(/^["']|["']$/g, '');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } finally {
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+      }
+      return { filename, bytes: blob.size };
+    },
+    leadClaimKit: (leadId, q) => get('/leads/' + leadId + '/claim-kit', q),
+    leadPostcard: async (leadId) => {
+      const headers = {};
+      const ws = getWorkspaceId();
+      if (ws) headers['X-Workspace-Id'] = String(ws);
+      const res = await fetch(V + '/leads/' + leadId + '/claim-kit?pdf=1', {
+        method: 'GET',
+        credentials: 'include',
+        headers,
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw responseError(res, data);
+      }
+      const cd = res.headers.get('Content-Disposition') || '';
+      let filename = 'bitpype-postcard.pdf';
+      const m = /filename="([^"]+)"/i.exec(cd) || /filename=([^;]+)/i.exec(cd);
+      if (m && m[1]) filename = m[1].trim().replace(/^["']|["']$/g, '');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } finally {
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+      }
+      return { filename, bytes: blob.size };
+    },
+    /** Download materialized site as application/zip (triggers browser save). */
+    websiteExportZip: async (id) => {
+      const headers = {};
+      const ws = getWorkspaceId();
+      if (ws) headers['X-Workspace-Id'] = String(ws);
+      const res = await fetch(V + '/websites/' + id + '/export-zip', {
+        method: 'GET',
+        credentials: 'include',
+        headers,
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw responseError(res, data);
+      }
+      const cd = res.headers.get('Content-Disposition') || '';
+      let filename = 'website.zip';
+      const m = /filename="([^"]+)"/i.exec(cd) || /filename=([^;]+)/i.exec(cd);
+      if (m && m[1]) filename = m[1].trim().replace(/^["']|["']$/g, '');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } finally {
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+      }
+      return { filename, bytes: blob.size };
+    },
     websiteVersions: (id, q) => get('/websites/' + id + '/versions', q),
     websiteRestore: (versionId) => post('/websites/restore', { versionId }),
+    websiteOptimizeImages: (id, body) => post('/websites/' + id + '/optimize-images', body || {}),
     websiteImages: (id, body) => post('/websites/' + id + '/images', body),
+    websiteLogo: (id, body) => post('/websites/' + id + '/logo', body),
+    designGenerateLogo: (id, body) => post('/design/' + id + '/generate-logo', body || {}),
 
     // ---- Cloudflare Pages ----
     cfGet: () => get('/cloudflare'),
     cfSave: (body) => put('/cloudflare', body),
     cfTest: () => post('/cloudflare/test', {}),
     cfPublish: (websiteId, dir) => post('/cloudflare/publish', { websiteId, dir }),
+
+    // ---- Domains (CF Registrar + Pages link) ----
+    domainsList: (q) => get('/domains', q),
+    domainsOwned: () => get('/domains/owned'),
+    domainsSearch: (q, opts) => get('/domains/search', Object.assign({ q }, opts || {})),
+    domainsCheck: (domains) => post('/domains/check', { domains }),
+    domainsRegister: (body) => post('/domains/register', body || {}),
+    domainsStatus: (domain) => get('/domains/' + encodeURIComponent(domain) + '/status'),
+    domainsLink: (body) => post('/domains/link', body || {}),
+    domainsUnlink: (body) => post('/domains/unlink', body || {}),
 
     // ---- outreach ----
     templates: () => get('/templates'),
@@ -187,14 +332,22 @@ window.ScoutApi = (() => {
     campaigns: (q) => get('/campaigns', q),
     createCampaign: (body) => post('/campaigns', body),
     campaignStatus: (id, status) => post('/campaigns/' + id + '/status', { status }),
+    campaignCancel: (id) => post('/campaigns/' + id + '/cancel', {}),
+    campaignDelete: (id) => del('/campaigns/' + id),
     campaignMessages: (id, q) => get('/campaigns/' + id + '/messages', q),
     processQueue: () => post('/outreach/process', {}),
     outreachStats: () => get('/outreach/stats'),
     suppression: (q) => get('/suppression', q),
     suppressionAdd: (email, reason) => post('/suppression', { email, reason }),
     suppressionRemove: (id) => del('/suppression/' + id),
-    emailCompose: (leadId, templateId, queue) => post('/email/compose', { leadId, templateId, queue: !!queue }),
+    emailCompose: (leadId, templateId, queue, channel) => post('/email/compose', {
+      leadId, templateId, queue: !!queue, ...(channel ? { channel } : {}),
+    }),
     emailSend: (messageId) => post('/email/send', { messageId }),
+    emailDraft: (body) => post('/email/draft', body || {}),
+    emailUploadAsset: (body) => post('/email/assets', body || {}),
+    smsQueue: (body) => post('/sms/queue', body || {}),
+    templatesByChannel: (channel) => get('/templates', channel ? { channel } : {}),
     pipeline: (q) => get('/pipeline', q),
     intentGet: (leadId) => get('/intent/' + leadId),
     intentRecord: (leadId, event, note) => post('/intent/' + leadId, { event, note }),
@@ -204,6 +357,9 @@ window.ScoutApi = (() => {
     settingsSet: (key, value) => put('/settings', { key, value }),
     settingsSecret: (key, value) => put('/settings/secret', { key, value }),
     automation: (paused) => post('/settings/automation', { paused }),
+    handsOffStatus: () => get('/hands-off'),
+    handsOffRun: (force) => post('/hands-off/run', { force: !!force }),
+    handsOffDigest: (force) => post('/hands-off/digest', { force: !!force }),
     prompts: () => get('/prompts'),
     promptSave: (key, body) => put('/prompts/' + encodeURIComponent(key), { body }),
     promptReset: (key) => post('/prompts/' + encodeURIComponent(key) + '/reset', {}),
@@ -228,6 +384,7 @@ window.ScoutApi = (() => {
     adminUser: (id) => get('/admin/users/' + id),
     adminCreateUser: (body) => post('/admin/users', body),
     adminUpdateUser: (id, body) => patch('/admin/users/' + id, body),
+    adminDeleteUser: (id) => del('/admin/users/' + id),
     adminWorkspaces: (q) => get('/admin/workspaces', q),
     adminWorkspace: (id) => get('/admin/workspaces/' + id),
     adminCreateWorkspace: (body) => post('/admin/workspaces', body),
@@ -242,11 +399,35 @@ window.ScoutApi = (() => {
     adminPayments: (q) => get('/admin/payments', q),
     adminRefunds: (q) => get('/admin/refunds', q),
     adminRefundPayment: (id, body) => post('/admin/payments/' + id + '/refund', body || {}),
+    adminUpsellTips: () => get('/admin/upsell-tips'),
+    adminUpsellTipCreate: (body) => post('/admin/upsell-tips', body),
+    adminUpsellTipUpdate: (id, body) => patch('/admin/upsell-tips/' + id, body),
+    adminUpsellTipDelete: (id) => del('/admin/upsell-tips/' + id),
 
     // ---- Billing (user) ----
     billingSummary: () => get('/billing/summary'),
-    billingCheckout: () => post('/billing/checkout', {}),
+    billingCheckout: (plan) => post('/billing/checkout', { plan: plan || 'standard' }),
+    billingChangePlan: (plan) => post('/billing/change-plan', { plan }),
+    billingCancel: () => post('/billing/cancel', {}),
+    billingResume: () => post('/billing/resume', {}),
+    billingCreditsCheckout: (quantity) => post('/billing/credits/checkout', { quantity: quantity || 1 }),
     billingPortal: () => post('/billing/portal', {}),
     deleteAccount: () => del('/billing/account', { confirm: 'DELETE' }),
+
+    // ---- Social (Facebook + Instagram) ----
+    socialOverview: () => get('/social/overview'),
+    socialAccounts: (leadId) => get('/social/accounts/' + leadId),
+    socialDisconnect: (id) => del('/social/accounts/' + id),
+    socialOauthStart: (leadId, returnTo) => get('/social/oauth/start', { leadId, returnTo }),
+    socialCampaigns: (q) => get('/social/campaigns', q),
+    socialCampaignGet: (id) => get('/social/campaigns/' + id),
+    socialGenerateMonth: (body) => post('/social/campaigns/generate', body),
+    socialCampaignStatus: (id, status) => post('/social/campaigns/' + id + '/status', { status }),
+    socialSendWeek: (id, force) => post('/social/campaigns/' + id + '/send-week', { force: !!force }),
+    socialUpdatePost: (id, body) => patch('/social/posts/' + id, body),
+    socialApprovePosts: (postIds) => post('/social/posts/approve', { postIds }),
+    socialPublishPost: (id) => post('/social/posts/' + id + '/publish', {}),
+    socialPublishDue: (body) => post('/social/publish-due', body || {}),
+    socialWeeklyTick: () => post('/social/weekly-tick', {}),
   };
 })();

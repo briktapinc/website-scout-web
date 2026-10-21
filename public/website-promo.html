@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Get your website handled — BitPype</title>
+  <meta name="description" content="Tell us about your business. BitPype builds and manages your website so you can focus on the work." />
+  <meta name="robots" content="noindex" />
+  <link rel="icon" href="/brand/bitpype-mark.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Figtree:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #1c140f;
+      --muted: #5c5148;
+      --cream: #f4efe6;
+      --paper: #fffaf4;
+      --teal: #0e7a68;
+      --coral: #c44732;
+      --gold: #f0b429;
+      --line: rgba(28, 20, 15, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: Figtree, sans-serif;
+      line-height: 1.5;
+      background:
+        radial-gradient(880px 420px at 100% -8%, rgba(239, 93, 69, 0.14), transparent 58%),
+        radial-gradient(720px 380px at -12% 8%, rgba(14, 122, 104, 0.1), transparent 52%),
+        var(--cream);
+    }
+    a { color: inherit; }
+    :focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+    .nav {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 16px 22px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(244, 239, 230, 0.92);
+      backdrop-filter: blur(12px);
+    }
+    .logo {
+      display: inline-flex; align-items: center; gap: 10px;
+      text-decoration: none; font-family: Fraunces, Georgia, serif;
+      font-weight: 700; font-size: 1.35rem; letter-spacing: -0.03em;
+    }
+    .logo img { width: 34px; height: 34px; border-radius: 10px; }
+    .wrap {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 36px 18px 72px;
+    }
+    h1 {
+      font-family: Fraunces, Georgia, serif;
+      font-size: clamp(1.8rem, 4vw, 2.45rem);
+      line-height: 1.15;
+      letter-spacing: -0.03em;
+      margin: 0 0 10px;
+    }
+    .lede { margin: 0 0 28px; color: var(--muted); font-size: 1.05rem; }
+    .card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 22px 20px 26px;
+      box-shadow: 0 18px 40px rgba(28, 20, 15, 0.06);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px 16px;
+    }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field.full { grid-column: 1 / -1; }
+    label { font-size: 0.82rem; font-weight: 700; }
+    .hint { font-weight: 400; color: var(--muted); }
+    input, textarea, select {
+      width: 100%;
+      border: 1.5px solid rgba(28, 20, 15, 0.16);
+      border-radius: 12px;
+      padding: 11px 12px;
+      font: inherit;
+      background: #fff;
+      color: var(--ink);
+    }
+    textarea { min-height: 88px; resize: vertical; }
+    .features {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 12px;
+    }
+    .features label {
+      display: flex; align-items: flex-start; gap: 8px;
+      font-size: 0.92rem; font-weight: 600;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .features input { width: auto; margin-top: 3px; }
+    #captcha-box { margin: 8px 0 4px; min-height: 78px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 8px; }
+    .btn {
+      appearance: none; border: 0; cursor: pointer;
+      background: var(--ink); color: var(--paper);
+      font: inherit; font-weight: 700;
+      padding: 12px 18px; border-radius: 999px;
+    }
+    .btn:disabled { opacity: 0.55; cursor: wait; }
+    .btn:hover:not(:disabled) { background: #2a1f18; }
+    .msg { margin: 10px 0 0; font-size: 0.92rem; min-height: 1.2em; }
+    .msg.ok { color: var(--teal); font-weight: 700; }
+    .msg.err { color: var(--coral); font-weight: 700; }
+    .success {
+      display: none;
+      text-align: center;
+      padding: 28px 12px;
+    }
+    .success.is-on { display: block; }
+    .success h2 {
+      font-family: Fraunces, Georgia, serif;
+      margin: 0 0 8px;
+    }
+    .form.is-hidden { display: none; }
+    @media (max-width: 640px) {
+      .grid, .features { grid-template-columns: 1fr; }
+      .wrap { padding-top: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <a class="logo" href="/">
+      <img src="/brand/bitpype-mark.svg" alt="" />
+      BitPype
+    </a>
+    <a href="/portal">Client login</a>
+  </nav>
+
+  <main class="wrap">
+    <h1>Tell us about your business</h1>
+    <p class="lede">We’ll use this to build your site with you — no tech homework required. Takes about two minutes.</p>
+
+    <div class="card">
+      <div class="success" id="success" hidden>
+        <h2>You’re on the list</h2>
+        <p>Thanks — we received your details and will follow up soon.</p>
+      </div>
+
+      <form class="form" id="promo-form" novalidate>
+        <div class="grid">
+          <div class="field">
+            <label for="name">Your name</label>
+            <input id="name" name="name" autocomplete="name" required maxlength="120" />
+          </div>
+          <div class="field">
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" autocomplete="email" required maxlength="200" />
+          </div>
+          <div class="field">
+            <label for="phone">Phone</label>
+            <input id="phone" name="phone" type="tel" autocomplete="tel" required maxlength="40" />
+          </div>
+          <div class="field">
+            <label for="businessName">Business name</label>
+            <input id="businessName" name="businessName" required maxlength="200" />
+          </div>
+          <div class="field">
+            <label for="businessCategory">Business category</label>
+            <input id="businessCategory" name="businessCategory" placeholder="e.g. Plumbing, Salon, Law firm" required maxlength="120" />
+          </div>
+          <div class="field">
+            <label for="businessAddress">Business address</label>
+            <input id="businessAddress" name="businessAddress" autocomplete="street-address" maxlength="300" />
+          </div>
+          <div class="field">
+            <label for="city">City</label>
+            <input id="city" name="city" autocomplete="address-level2" required maxlength="100" />
+          </div>
+          <div class="field">
+            <label for="state">State</label>
+            <input id="state" name="state" autocomplete="address-level1" required maxlength="40" />
+          </div>
+          <div class="field full">
+            <label for="services">Services <span class="hint">(comma or line separated)</span></label>
+            <textarea id="services" name="services" placeholder="e.g. Emergency repair, Installations, Maintenance" maxlength="4000"></textarea>
+          </div>
+          <div class="field full">
+            <label for="social">Social media handles <span class="hint">(optional — Instagram, Facebook, etc.)</span></label>
+            <textarea id="social" name="social" placeholder="instagram: @yourbiz&#10;facebook: facebook.com/yourbiz" maxlength="2000"></textarea>
+          </div>
+          <div class="field full">
+            <label for="brochure">Brochure <span class="hint">(optional — PDF, Word, or image, max 8MB)</span></label>
+            <input id="brochure" name="brochure" type="file" accept=".pdf,.doc,.docx,image/*,application/pdf" />
+          </div>
+          <div class="field full">
+            <label>Desired features</label>
+            <div class="features" id="features"></div>
+          </div>
+          <div class="field full">
+            <div id="captcha-box" aria-label="Captcha"></div>
+          </div>
+        </div>
+        <div class="actions">
+          <button type="submit" class="btn" id="submit-btn">Submit</button>
+          <p class="msg" id="msg" role="status"></p>
+        </div>
+      </form>
+    </div>
+  </main>
+
+  <script src="/js/captcha.js"></script>
+  <script>
+    (function () {
+      const FEATURES = [
+        { id: 'appointment_form', label: 'Appointment / booking form' },
+        { id: 'contact_form', label: 'Contact form' },
+        { id: 'blog', label: 'Blog' },
+        { id: 'chat', label: 'Live chat / chatbot' },
+        { id: 'gallery', label: 'Photo gallery' },
+        { id: 'ecommerce', label: 'Online shop' },
+        { id: 'faq', label: 'FAQ' },
+        { id: 'testimonials', label: 'Testimonials' },
+      ];
+
+      const form = document.getElementById('promo-form');
+      const featuresEl = document.getElementById('features');
+      const msg = document.getElementById('msg');
+      const btn = document.getElementById('submit-btn');
+      const success = document.getElementById('success');
+      let captcha = { enabled: false, getToken: async () => '', reset: () => {} };
+
+      FEATURES.forEach((f) => {
+        const label = document.createElement('label');
+        label.innerHTML = `<input type="checkbox" name="feature" value="${f.id}" /> <span>${f.label}</span>`;
+        featuresEl.appendChild(label);
+      });
+
+      function setMsg(text, kind) {
+        msg.textContent = text || '';
+        msg.className = 'msg' + (kind ? ' ' + kind : '');
+      }
+
+      function readFileAsBrochure(file) {
+        return new Promise((resolve, reject) => {
+          if (!file) return resolve(null);
+          if (file.size > 8 * 1024 * 1024) {
+            reject(new Error('Brochure must be under 8MB'));
+            return;
+          }
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = String(reader.result || '');
+            const m = result.match(/^data:([^;]+);base64,(.+)$/);
+            if (!m) return reject(new Error('Could not read brochure file'));
+            resolve({ mimeType: m[1], data: m[2] });
+          };
+          reader.onerror = () => reject(new Error('Could not read brochure file'));
+          reader.readAsDataURL(file);
+        });
+      }
+
+      async function mountCaptcha() {
+        try {
+          if (!window.ScoutCaptcha) return;
+          captcha = await window.ScoutCaptcha.mount(document.getElementById('captcha-box'));
+        } catch (e) {
+          console.warn('captcha mount failed', e);
+        }
+      }
+
+      form.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        setMsg('');
+        btn.disabled = true;
+        try {
+          const features = [...form.querySelectorAll('input[name="feature"]:checked')].map((el) => el.value);
+          const brochureInput = document.getElementById('brochure');
+          const brochure = await readFileAsBrochure(brochureInput && brochureInput.files && brochureInput.files[0]);
+          const captchaToken = await captcha.getToken();
+          const payload = {
+            name: document.getElementById('name').value.trim(),
+            email: document.getElementById('email').value.trim(),
+            phone: document.getElementById('phone').value.trim(),
+            businessName: document.getElementById('businessName').value.trim(),
+            businessCategory: document.getElementById('businessCategory').value.trim(),
+            businessAddress: document.getElementById('businessAddress').value.trim(),
+            city: document.getElementById('city').value.trim(),
+            state: document.getElementById('state').value.trim(),
+            services: document.getElementById('services').value.trim(),
+            social: document.getElementById('social').value.trim(),
+            features,
+            brochure,
+            captchaToken,
+          };
+          const res = await fetch('/api/v1/website-promo/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const data = await res.json().catch(() => null);
+          if (!res.ok || !data || !data.ok) {
+            throw new Error((data && data.error) || 'Submit failed');
+          }
+          form.classList.add('is-hidden');
+          success.hidden = false;
+          success.classList.add('is-on');
+          setMsg('');
+        } catch (e) {
+          setMsg(e.message || 'Something went wrong', 'err');
+          if (captcha.reset) captcha.reset();
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      mountCaptcha();
+    })();
+  </script>
+</body>
+</html>
