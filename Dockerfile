@@ -4,6 +4,8 @@ ARG DEBIAN_SNAPSHOT=20261020T000000Z
 
 WORKDIR /app
 
+COPY deploy/fetch-snapshot-packages.cjs /usr/local/lib/bitpype-fetch-snapshot-packages.cjs
+
 # Native build tools + Chromium for site preview screenshots (Puppeteer).
 # Bootstrap HTTPS trust from the CA roots embedded in the pinned Node image.
 # Debian's ca-certificates package replaces this bundle during the install.
@@ -11,7 +13,7 @@ RUN mkdir -p /etc/ssl/certs \
     && node -e 'require("fs").writeFileSync("/etc/ssl/certs/ca-certificates.crt",require("tls").rootCertificates.join("\n")+"\n")' \
     && rm -f /etc/apt/sources.list.d/debian.sources \
     && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s bookworm main\ndeb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/%s bookworm-security main\n' "$DEBIAN_SNAPSHOT" "$DEBIAN_SNAPSHOT" > /etc/apt/sources.list \
-    && apt-get -o Acquire::Retries=5 -o Acquire::https::Timeout=30 -o APT::Update::Error-Mode=any update && apt-get -o Acquire::Retries=5 -o Acquire::https::Timeout=30 install -y --no-install-recommends \
+    && apt-get -o Acquire::Retries=5 -o Acquire::https::Timeout=30 -o APT::Update::Error-Mode=any update && node /usr/local/lib/bitpype-fetch-snapshot-packages.cjs \
     python3 make g++ \
     chromium \
     fonts-liberation \
