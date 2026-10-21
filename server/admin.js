@@ -38,6 +38,11 @@ async function overview() {
   };
 }
 
+function notDeletedClause(alias = 'u') {
+  // MySQL DATETIME rejects '' comparisons; soft-delete uses NULL when active.
+  return `${alias}.deleted_at IS NULL`;
+}
+
 async function listUsers({ q = '', limit = 100 } = {}) {
   const lim = Math.min(500, Math.max(1, Number(limit) || 100));
   const like = `%${String(q || '').trim()}%`;
@@ -46,7 +51,8 @@ async function listUsers({ q = '', limit = 100 } = {}) {
       `SELECT u.id, u.email, u.name, u.is_super_admin, u.status, u.last_login_at, u.created_at,
               (SELECT COUNT(*) FROM workspace_members m WHERE m.user_id = u.id) AS workspace_count
        FROM users u
-       WHERE u.email LIKE :like OR u.name LIKE :like
+       WHERE ${notDeletedClause('u')}
+         AND (u.email LIKE :like OR u.name LIKE :like)
        ORDER BY u.id DESC
        LIMIT ${lim}`,
       { like }
@@ -56,6 +62,7 @@ async function listUsers({ q = '', limit = 100 } = {}) {
     `SELECT u.id, u.email, u.name, u.is_super_admin, u.status, u.last_login_at, u.created_at,
             (SELECT COUNT(*) FROM workspace_members m WHERE m.user_id = u.id) AS workspace_count
      FROM users u
+     WHERE ${notDeletedClause('u')}
      ORDER BY u.id DESC
      LIMIT ${lim}`
   );
@@ -63,11 +70,11 @@ async function listUsers({ q = '', limit = 100 } = {}) {
 
 async function getUser(id) {
   const rows = await query(
-    `SELECT id, email, name, is_super_admin, status, last_login_at, created_at, updated_at
+    `SELECT id, email, name, is_super_admin, status, last_login_at, created_at, updated_at, deleted_at
      FROM users WHERE id = :id LIMIT 1`,
     { id: Number(id) }
   );
-  if (!rows[0]) return null;
+  if (!rows[0] || rows[0].deleted_at) return null;
   const memberships = await query(
     `SELECT m.role, w.id AS workspace_id, w.name, w.slug
      FROM workspace_members m
@@ -99,8 +106,17 @@ async function createUser({ email, password, name, workspaceName, superAdmin = f
   return created;
 }
 
-async function updateUser(id, patch = {}) {
+/** Normalize status: UI "blocked" maps to DB status "disabled" (blocks sign-in). */
+function normalizeStatus(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (s === 'disabled' || s === 'blocked') return 'disabled';
+  if (s === 'active' || s === 'enabled' || s === 'unblocked') return 'active';
+  return null;
+}
+
+async function updateUser(id, patch = {}, { actorUserId = null } = {}) {
   const uid = Number(id);
+  const actor = actorUserId != null ? Number(actorUserId) : null;
   const cur = await getUser(uid);
   if (!cur) {
     const e = new Error('NOT_FOUND');
@@ -115,14 +131,42 @@ async function updateUser(id, patch = {}) {
   }
   if (patch.email != null) {
     const email = String(patch.email).trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      const e = new Error('Invalid email');
+      e.code = 'INVALID_EMAIL';
+      throw e;
+    }
+    const existing = await query(
+      'SELECT id FROM users WHERE email = :email AND id != :id LIMIT 1',
+      { email, id: uid }
+    );
+    if (existing[0]) {
+      const e = new Error('EMAIL_IN_USE');
+      e.code = 'EMAIL_IN_USE';
+      throw e;
+    }
     await query('UPDATE users SET email = :email WHERE id = :id', { id: uid, email });
   }
   if (patch.status != null) {
-    const status = String(patch.status) === 'disabled' ? 'disabled' : 'active';
+    const status = normalizeStatus(patch.status);
+    if (!status) {
+      const e = new Error('Invalid status');
+      e.code = 'INVALID_STATUS';
+      throw e;
+    }
+    if (status === 'disabled' && actor != null && actor === uid) {
+      const e = new Error('Cannot block your own account');
+      e.code = 'SELF_BLOCK';
+      throw e;
+    }
     if (status === 'disabled' && Number(cur.user.is_super_admin) === 1) {
-      const admins = await query('SELECT COUNT(*) AS c FROM users WHERE is_super_admin = 1 AND status = \'active\'');
+      const admins = await query(
+        `SELECT COUNT(*) AS c FROM users
+         WHERE is_super_admin = 1 AND (status = 'active' OR status IS NULL OR status = '')
+           AND deleted_at IS NULL`
+      );
       if (Number(admins[0].c) <= 1) {
-        const e = new Error('Cannot disable the last active super admin');
+        const e = new Error('Cannot block the last active super admin');
         e.code = 'LAST_SUPER_ADMIN';
         throw e;
       }
@@ -131,8 +175,16 @@ async function updateUser(id, patch = {}) {
   }
   if (patch.is_super_admin != null || patch.superAdmin != null) {
     const on = !!(patch.is_super_admin != null ? patch.is_super_admin : patch.superAdmin);
+    if (!on && actor != null && actor === uid) {
+      const e = new Error('Cannot demote your own account');
+      e.code = 'SELF_DEMOTE';
+      throw e;
+    }
     if (!on && Number(cur.user.is_super_admin) === 1) {
-      const admins = await query('SELECT COUNT(*) AS c FROM users WHERE is_super_admin = 1');
+      const admins = await query(
+        `SELECT COUNT(*) AS c FROM users
+         WHERE is_super_admin = 1 AND deleted_at IS NULL`
+      );
       if (Number(admins[0].c) <= 1) {
         const e = new Error('Cannot demote the last super admin');
         e.code = 'LAST_SUPER_ADMIN';
@@ -151,6 +203,74 @@ async function updateUser(id, patch = {}) {
     await query('UPDATE users SET password_hash = :hash WHERE id = :id', { id: uid, hash });
   }
   return getUser(uid);
+}
+
+/**
+ * Soft-delete a user (same pattern as billing.deleteAccount):
+ * tombstone email, disable, set deleted_at, remove workspace memberships.
+ * Workspaces are kept; sole-owned workspaces become ownerless (manage via Workspaces tab).
+ */
+async function deleteUser(id, { actorUserId = null } = {}) {
+  const uid = Number(id);
+  const actor = actorUserId != null ? Number(actorUserId) : null;
+  if (actor != null && actor === uid) {
+    const e = new Error('Cannot delete your own account from admin');
+    e.code = 'SELF_DELETE';
+    throw e;
+  }
+  const cur = await getUser(uid);
+  if (!cur) {
+    const e = new Error('NOT_FOUND');
+    e.code = 'NOT_FOUND';
+    throw e;
+  }
+  if (Number(cur.user.is_super_admin) === 1) {
+    const admins = await query(
+      `SELECT COUNT(*) AS c FROM users
+       WHERE is_super_admin = 1 AND (status = 'active' OR status IS NULL OR status = '')
+         AND deleted_at IS NULL`
+    );
+    if (Number(admins[0].c) <= 1) {
+      const e = new Error('Cannot delete the last super admin');
+      e.code = 'LAST_SUPER_ADMIN';
+      throw e;
+    }
+  }
+
+  const soleOwned = await query(
+    `SELECT m.workspace_id, w.name
+     FROM workspace_members m
+     JOIN workspaces w ON w.id = m.workspace_id
+     WHERE m.user_id = :id AND m.role = 'owner'
+       AND NOT EXISTS (
+         SELECT 1 FROM workspace_members m2
+         WHERE m2.workspace_id = m.workspace_id AND m2.user_id != :id AND m2.role = 'owner'
+       )`,
+    { id: uid }
+  );
+
+  const tombstone = `deleted+${uid}@deleted.local`;
+  await query(
+    `UPDATE users SET
+       status = 'disabled',
+       email = :email,
+       name = 'Deleted user',
+       password_hash = :hash,
+       deleted_at = ${driver() === 'sqlite' ? "datetime('now')" : 'CURRENT_TIMESTAMP'},
+       is_super_admin = 0
+     WHERE id = :id`,
+    { email: tombstone, hash: '!', id: uid }
+  );
+  await query('DELETE FROM workspace_members WHERE user_id = :id', { id: uid });
+
+  return {
+    deleted: true,
+    userId: uid,
+    soleOwnedWorkspaces: (soleOwned || []).map((r) => ({
+      id: r.workspace_id,
+      name: r.name,
+    })),
+  };
 }
 
 async function listWorkspaces({ q = '', limit = 100 } = {}) {
@@ -340,6 +460,7 @@ module.exports = {
   getUser,
   createUser,
   updateUser,
+  deleteUser,
   listWorkspaces,
   getWorkspace,
   createWorkspace,

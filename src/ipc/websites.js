@@ -12,6 +12,7 @@
  *  sites:restore versionId        -> {ok, site}
  *  sites:qa id                    -> {ok, pass, checks:[...]}
  *  sites:export id                -> {ok, path} (~/website-scout-exports/<slug>/)
+ *  sites:delete id                -> {ok, id, deleted, removedFolders}
  *  sites:forLead leadId           -> {ok, site|null}
  *  sites:renderHtml {id}          -> {ok, html} (iframe preview)
  */
@@ -139,6 +140,12 @@ function register(ipcMain, db) {
     return { site: siteRow(db, Number(id)) };
   }));
 
+  ipcMain.handle('sites:delete', wrap((id) => {
+    const websiteId = Number(id && id.id !== undefined ? id.id : id);
+    if (!Number.isInteger(websiteId) || websiteId < 1) throw siteErr('INVALID_ID', 'id must be a positive integer.');
+    return engine.deleteWebsite(db, websiteId);
+  }));
+
   ipcMain.handle('sites:generate', wrap(async (args) => {
     // Assign-to-agent is design:create. This channel is the explicit template fallback.
     const leadId = Number(args && typeof args === 'object' ? args.leadId : args);
@@ -156,7 +163,10 @@ function register(ipcMain, db) {
   ipcMain.handle('sites:save', wrap((args = {}) => {
     const id = Number(args.id);
     if (!Number.isInteger(id)) throw siteErr('INVALID_ID', 'id must be an integer.');
-    const pages = validatePages(parseJsonField(args.pages, 'pages'));
+    let pages = validatePages(parseJsonField(args.pages, 'pages'));
+    try {
+      pages = require('../siteStructure').syncFreeformNavOrder(pages);
+    } catch { /* optional */ }
     const theme = parseJsonField(args.theme, 'theme');
     if (!theme || typeof theme !== 'object' || Array.isArray(theme)) {
       throw siteErr('INVALID_THEME', 'theme must be an object.');
@@ -197,6 +207,32 @@ function register(ipcMain, db) {
     return { path: out };
   }));
 
+  /** Claim kit JSON (URLs + QR data-URLs). Optional includePdf writes postcard to exports folder. */
+  ipcMain.handle('sites:claimKit', wrap(async (args) => {
+    const claimKit = require('../claimKit');
+    const id = Number(args && args.id != null ? args.id : args);
+    if (!Number.isInteger(id) || id <= 0) throw siteErr('INVALID_ID', 'id must be an integer.');
+    const site = engine.getWebsite(db, id);
+    const leadId = Number(site.lead_id);
+    if (!Number.isInteger(leadId) || leadId <= 0) throw siteErr('NO_LEAD', 'Website has no lead.');
+    const workspaceId = Number(args && args.workspaceId) > 0 ? Number(args.workspaceId) : 1;
+    const includePdf = !!(args && args.includePdf);
+    const kit = await claimKit.buildClaimKit(db, workspaceId, {
+      leadId,
+      websiteId: id,
+      includePdf,
+    });
+    if (kit.pdf) {
+      const dir = path.join(os.homedir(), 'website-scout-exports', 'postcards');
+      require('fs').mkdirSync(dir, { recursive: true });
+      const filePath = path.join(dir, kit.filename || `postcard-${leadId}.pdf`);
+      require('fs').writeFileSync(filePath, kit.pdf);
+      const { pdf, ...rest } = kit;
+      return { ...rest, pdfPath: filePath, pdfBytes: pdf.length };
+    }
+    return kit;
+  }));
+
   ipcMain.handle('sites:forLead', wrap((leadId) => {
     if (!Number.isInteger(Number(leadId))) throw siteErr('INVALID_ID', 'leadId must be an integer.');
     const row = db.prepare('SELECT id FROM websites WHERE lead_id = ?').get(Number(leadId));
@@ -206,6 +242,7 @@ function register(ipcMain, db) {
   ipcMain.handle('sites:renderHtml', wrap((args) => {
     const opts = {
       editable: !!(args && args.editable),
+      preview: true,
       pageSlug: args && args.pageSlug,
       pageIndex: args && (Number.isInteger(args.pageIndex) ? args.pageIndex : (args.pageIndex != null ? Number(args.pageIndex) : undefined)),
     };

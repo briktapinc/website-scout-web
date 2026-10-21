@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS email_templates (
   name TEXT NOT NULL,
   subject TEXT NOT NULL,
   body TEXT NOT NULL,
+  sms_body TEXT NOT NULL DEFAULT '', -- plain-text SMS companion (same template as email)
+  channel TEXT NOT NULL DEFAULT 'email', -- legacy; templates are dual-channel (send chooses email|sms|both)
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -101,7 +103,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   template_id INTEGER REFERENCES email_templates(id),
-  status TEXT DEFAULT 'draft', -- draft,active,paused,done
+  status TEXT DEFAULT 'draft', -- draft,active,paused,done,cancelled
   rate_per_hour INTEGER DEFAULT 30,
   created_at TEXT DEFAULT (datetime('now'))
 );
@@ -116,7 +118,9 @@ CREATE TABLE IF NOT EXISTS campaign_messages (
   status TEXT DEFAULT 'queued', -- queued,sent,failed,suppressed
   scheduled_at TEXT,
   sent_at TEXT,
-  error TEXT
+  error TEXT,
+  channel TEXT NOT NULL DEFAULT 'email', -- email | sms
+  to_phone TEXT
 );
 
 CREATE TABLE IF NOT EXISTS email_events (

@@ -169,6 +169,7 @@ async function migrate() {
     try { ensureColumnSqlite(db, 'users', 'stripe_subscription_id', 'TEXT'); } catch { /* */ }
     try { ensureColumnSqlite(db, 'users', 'subscription_status', "TEXT NOT NULL DEFAULT 'none'"); } catch { /* */ }
     try { ensureColumnSqlite(db, 'users', 'subscription_price_id', 'TEXT'); } catch { /* */ }
+    try { ensureColumnSqlite(db, 'users', 'billing_plan', "TEXT NOT NULL DEFAULT 'free'"); } catch { /* */ }
     try { ensureColumnSqlite(db, 'users', 'current_period_end', 'TEXT'); } catch { /* */ }
     try { ensureColumnSqlite(db, 'users', 'deleted_at', 'TEXT'); } catch { /* */ }
     db.exec(`
@@ -226,7 +227,122 @@ async function migrate() {
         expires_at TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
+      CREATE TABLE IF NOT EXISTS client_portal_users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        workspace_id INTEGER NOT NULL,
+        lead_id INTEGER NOT NULL,
+        business_name TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active',
+        last_login_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS client_portal_login_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        portal_user_id INTEGER NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS credit_balances (
+        workspace_id INTEGER NOT NULL PRIMARY KEY,
+        balance INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS credit_ledger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspace_id INTEGER NOT NULL,
+        user_id INTEGER,
+        delta INTEGER NOT NULL,
+        balance_after INTEGER NOT NULL,
+        reason TEXT NOT NULL DEFAULT '',
+        ref_type TEXT,
+        ref_id TEXT,
+        stripe_checkout_session_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(stripe_checkout_session_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_credit_ledger_ws ON credit_ledger(workspace_id, id DESC);
+      CREATE TABLE IF NOT EXISTS portal_referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        referrer_portal_user_id INTEGER NOT NULL,
+        referrer_workspace_id INTEGER NOT NULL,
+        referrer_lead_id INTEGER,
+        referred_name TEXT NOT NULL DEFAULT '',
+        referred_email TEXT,
+        referred_phone TEXT,
+        referred_business_name TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        linked_lead_id INTEGER,
+        linked_portal_user_id INTEGER,
+        linked_user_id INTEGER,
+        plan_id TEXT,
+        plan_amount_cents INTEGER,
+        credits_awarded INTEGER NOT NULL DEFAULT 0,
+        credited_at TEXT,
+        stripe_subscription_id TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_portal_referrals_referrer ON portal_referrals(referrer_portal_user_id);
+      CREATE INDEX IF NOT EXISTS idx_portal_referrals_ws ON portal_referrals(referrer_workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_portal_referrals_email ON portal_referrals(referred_email);
+      CREATE INDEX IF NOT EXISTS idx_portal_referrals_status ON portal_referrals(status);
+      CREATE TABLE IF NOT EXISTS stripe_events (
+        event_id TEXT NOT NULL PRIMARY KEY,
+        type TEXT NOT NULL DEFAULT '',
+        processed_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS upsell_tips (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        feature_key TEXT NOT NULL DEFAULT '',
+        target_plans TEXT NOT NULL DEFAULT 'free',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        frequency_hours INTEGER NOT NULL DEFAULT 72,
+        weight INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        cta_label TEXT NOT NULL DEFAULT 'Upgrade',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS upsell_tip_impressions (
+        portal_user_id INTEGER NOT NULL,
+        tip_id INTEGER NOT NULL,
+        last_shown_at TEXT NOT NULL,
+        show_count INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (portal_user_id, tip_id)
+      );
+      CREATE TABLE IF NOT EXISTS mcp_oauth_auth_codes (
+        code TEXT NOT NULL PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS mcp_oauth_refresh_tokens (
+        token_hash TEXT NOT NULL PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS mcp_oauth_clients (
+        client_id TEXT NOT NULL PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_mcp_oauth_codes_exp ON mcp_oauth_auth_codes(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_mcp_oauth_refresh_exp ON mcp_oauth_refresh_tokens(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_mcp_oauth_clients_exp ON mcp_oauth_clients(expires_at);
     `);
+    try { ensureColumnSqlite(db, 'workspace_tokens', 'lead_id', 'INTEGER'); } catch { /* */ }
+    ensureColumnSqlite(db, 'job_runs', 'trigger_source', "TEXT NOT NULL DEFAULT 'legacy'");
+    ensureColumnSqlite(db, 'job_runs', 'triggered_by', "TEXT NOT NULL DEFAULT 'unknown'");
+    ensureColumnSqlite(db, 'workspace_tokens', 'expires_at', 'INTEGER');
+    ensureColumnSqlite(db, 'workspace_tokens', 'oauth_user_id', 'INTEGER');
+    await require('./oauthTokenPolicy').backfill(query);
     return;
   }
 
@@ -247,6 +363,7 @@ async function migrate() {
     await ensureColumnMysql(conn, 'users', 'stripe_subscription_id', 'VARCHAR(120) NULL');
     await ensureColumnMysql(conn, 'users', 'subscription_status', "VARCHAR(40) NOT NULL DEFAULT 'none'");
     await ensureColumnMysql(conn, 'users', 'subscription_price_id', 'VARCHAR(120) NULL');
+    await ensureColumnMysql(conn, 'users', 'billing_plan', "VARCHAR(40) NOT NULL DEFAULT 'free'");
     await ensureColumnMysql(conn, 'users', 'current_period_end', 'DATETIME NULL');
     await ensureColumnMysql(conn, 'users', 'deleted_at', 'DATETIME NULL');
     await conn.query(`
@@ -327,7 +444,151 @@ async function migrate() {
         KEY idx_invite_email (email)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS client_portal_users (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        email VARCHAR(254) NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        workspace_id BIGINT UNSIGNED NOT NULL,
+        lead_id BIGINT UNSIGNED NOT NULL,
+        business_name VARCHAR(200) NOT NULL DEFAULT '',
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        last_login_at DATETIME NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_client_portal_email (email),
+        KEY idx_client_portal_ws_lead (workspace_id, lead_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS client_portal_login_tokens (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        portal_user_id BIGINT UNSIGNED NOT NULL,
+        token_hash CHAR(64) NOT NULL,
+        expires_at DATETIME NOT NULL,
+        used_at DATETIME NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_cpl_hash (token_hash),
+        KEY idx_cpl_user (portal_user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS credit_balances (
+        workspace_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+        balance INT NOT NULL DEFAULT 0,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS credit_ledger (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        workspace_id BIGINT UNSIGNED NOT NULL,
+        user_id BIGINT UNSIGNED NULL,
+        delta INT NOT NULL,
+        balance_after INT NOT NULL,
+        reason VARCHAR(120) NOT NULL DEFAULT '',
+        ref_type VARCHAR(60) NULL,
+        ref_id VARCHAR(80) NULL,
+        stripe_checkout_session_id VARCHAR(120) NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_credit_ledger_session (stripe_checkout_session_id),
+        KEY idx_credit_ledger_ws (workspace_id, id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS portal_referrals (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        referrer_portal_user_id BIGINT UNSIGNED NOT NULL,
+        referrer_workspace_id BIGINT UNSIGNED NOT NULL,
+        referrer_lead_id BIGINT UNSIGNED NULL,
+        referred_name VARCHAR(160) NOT NULL DEFAULT '',
+        referred_email VARCHAR(254) NULL,
+        referred_phone VARCHAR(40) NULL,
+        referred_business_name VARCHAR(200) NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        linked_lead_id BIGINT UNSIGNED NULL,
+        linked_portal_user_id BIGINT UNSIGNED NULL,
+        linked_user_id BIGINT UNSIGNED NULL,
+        plan_id VARCHAR(40) NULL,
+        plan_amount_cents INT NULL,
+        credits_awarded INT NOT NULL DEFAULT 0,
+        credited_at DATETIME NULL,
+        stripe_subscription_id VARCHAR(120) NULL,
+        notes TEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_portal_referrals_referrer (referrer_portal_user_id),
+        KEY idx_portal_referrals_ws (referrer_workspace_id),
+        KEY idx_portal_referrals_email (referred_email),
+        KEY idx_portal_referrals_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS stripe_events (
+        event_id VARCHAR(120) NOT NULL PRIMARY KEY,
+        type VARCHAR(80) NOT NULL DEFAULT '',
+        processed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_stripe_events_type (type)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await ensureColumnMysql(conn, 'workspace_tokens', 'lead_id', 'BIGINT UNSIGNED NULL');
+    await ensureColumnMysql(conn, 'job_runs', 'trigger_source', "VARCHAR(40) NOT NULL DEFAULT 'legacy'");
+    await ensureColumnMysql(conn, 'job_runs', 'triggered_by', "VARCHAR(120) NOT NULL DEFAULT 'unknown'");
+    await ensureColumnMysql(conn, 'workspace_tokens', 'expires_at', 'BIGINT NULL');
+    await ensureColumnMysql(conn, 'workspace_tokens', 'oauth_user_id', 'BIGINT UNSIGNED NULL');
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS upsell_tips (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        title VARCHAR(200) NOT NULL,
+        body TEXT NOT NULL,
+        feature_key VARCHAR(80) NOT NULL DEFAULT '',
+        target_plans VARCHAR(80) NOT NULL DEFAULT 'free',
+        enabled TINYINT(1) NOT NULL DEFAULT 1,
+        frequency_hours INT NOT NULL DEFAULT 72,
+        weight INT NOT NULL DEFAULT 1,
+        sort_order INT NOT NULL DEFAULT 0,
+        cta_label VARCHAR(80) NOT NULL DEFAULT 'Upgrade',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_upsell_tips_enabled (enabled, sort_order)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS upsell_tip_impressions (
+        portal_user_id BIGINT UNSIGNED NOT NULL,
+        tip_id BIGINT UNSIGNED NOT NULL,
+        last_shown_at DATETIME NOT NULL,
+        show_count INT NOT NULL DEFAULT 1,
+        PRIMARY KEY (portal_user_id, tip_id),
+        KEY idx_upsell_imp_shown (last_shown_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS mcp_oauth_auth_codes (
+        code VARCHAR(128) NOT NULL PRIMARY KEY,
+        payload_json MEDIUMTEXT NOT NULL,
+        expires_at BIGINT NOT NULL,
+        KEY idx_mcp_oauth_codes_exp (expires_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS mcp_oauth_refresh_tokens (
+        token_hash VARCHAR(128) NOT NULL PRIMARY KEY,
+        payload_json MEDIUMTEXT NOT NULL,
+        expires_at BIGINT NOT NULL,
+        KEY idx_mcp_oauth_refresh_exp (expires_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS mcp_oauth_clients (
+        client_id VARCHAR(128) NOT NULL PRIMARY KEY,
+        payload_json MEDIUMTEXT NOT NULL,
+        expires_at BIGINT NOT NULL,
+        KEY idx_mcp_oauth_clients_exp (expires_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
   });
+  await require('./oauthTokenPolicy').backfill(query);
 }
 
 async function ping() {

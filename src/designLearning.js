@@ -214,8 +214,7 @@ function distillHeuristic(db, { category, summary, event_type }) {
 async function distillWithAi(db, { limit = 30 } = {}) {
   if (!learningEnabled(db)) return { ok: false, reason: 'disabled' };
   ensureTables(db);
-  ai.setDb(db);
-  if (!ai.aiConfigured()) return { ok: false, reason: 'ai_not_configured' };
+  if (!ai.aiConfigured(db)) return { ok: false, reason: 'ai_not_configured' };
   const rows = db.prepare(
     `SELECT event_type, category, summary, request_kind, created_at
      FROM design_learning_events ORDER BY id DESC LIMIT ?`
@@ -225,6 +224,7 @@ async function distillWithAi(db, { limit = 30 } = {}) {
   try {
     const { text } = await ai.chat({
       task: 'qa',
+      db,
       messages: [
         {
           role: 'system',

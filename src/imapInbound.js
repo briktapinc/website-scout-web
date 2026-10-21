@@ -87,9 +87,11 @@ function bodyText(parsed) {
 
 function imapConfig(db) {
   const enabled = getSetting(db, 'mail.imap.enabled', '0') === '1';
-  const host = getSetting(db, 'mail.imap.host', '').trim() || getSetting(db, 'smtp.host', '').trim();
-  const user = getSetting(db, 'mail.imap.user', '').trim() || getSetting(db, 'smtp.user', '').trim();
-  const pass = getSetting(db, 'mail.imap.pass', '') || getSetting(db, 'smtp.pass', '');
+  // Do not reuse the SMTP host. Mailjet (and most SMTP relays) are not IMAP servers,
+  // and a connect to port 993 there hangs until the TCP timeout.
+  const host = getSetting(db, 'mail.imap.host', '').trim();
+  const user = getSetting(db, 'mail.imap.user', '').trim() || (host ? getSetting(db, 'smtp.user', '').trim() : '');
+  const pass = getSetting(db, 'mail.imap.pass', '') || (host ? getSetting(db, 'smtp.pass', '') : '');
   const port = Number(getSetting(db, 'mail.imap.port', '993')) || 993;
   const secure = getSetting(db, 'mail.imap.secure', '1') !== '0';
   const mailbox = getSetting(db, 'mail.imap.mailbox', 'INBOX').trim() || 'INBOX';
@@ -198,6 +200,9 @@ async function pollMailbox(db, opts = {}) {
     auth: { user: cfg.user, pass: cfg.pass },
     logger: false,
     emitLogs: false,
+    connectionTimeout: 12000,
+    greetingTimeout: 12000,
+    socketTimeout: 20000,
   });
 
   const results = [];

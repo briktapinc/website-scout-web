@@ -10,6 +10,8 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 function exportRoot() {
+  const fromEnv = String(process.env.EXPORT_ROOT || process.env.WEBSITE_SCOUT_EXPORTS || '').trim();
+  if (fromEnv) return path.resolve(fromEnv);
   return path.resolve(os.homedir(), 'website-scout-exports');
 }
 
@@ -104,12 +106,13 @@ async function openWebsiteFile(db, websiteId) {
   return { path: opened.path, websiteId: site.id };
 }
 
-function exportPages(pages, theme, folderName) {
+function exportPages(pages, theme, folderName, opts = {}) {
   const engine = require('./websiteEngine');
   const root = exportRoot();
   const safeFolder = String(folderName || 'preview').replace(/[^a-z0-9-_]/gi, '').slice(0, 40) || 'preview';
   const dir = path.join(root, safeFolder);
-  const written = engine.writeStaticPages(pages, theme || {}, dir);
+  const writeOpts = Object.assign({}, opts || {});
+  const written = engine.writeStaticPages(pages, theme || {}, dir, writeOpts);
   const file = path.join(dir, 'index.html');
   return {
     folder: safeFolder,
@@ -122,8 +125,8 @@ function exportPages(pages, theme, folderName) {
 /**
  * Export pages and return a localhost http URL (starts preview server if needed).
  */
-async function previewUrlForPages(pages, theme, folderName) {
-  const exported = exportPages(pages, theme, folderName);
+async function previewUrlForPages(pages, theme, folderName, opts = {}) {
+  const exported = exportPages(pages, theme, folderName, opts);
   const previewServer = require('./previewServer');
   const served = await previewServer.urlForExportFolder(exported.folder);
   return {
@@ -134,8 +137,8 @@ async function previewUrlForPages(pages, theme, folderName) {
   };
 }
 
-async function openPagesFile(pages, theme, folderName) {
-  const preview = await previewUrlForPages(pages, theme, folderName);
+async function openPagesFile(pages, theme, folderName, opts = {}) {
+  const preview = await previewUrlForPages(pages, theme, folderName, opts);
   // Prefer http URL so multipage relative links resolve.
   try {
     const shell = electronShell();

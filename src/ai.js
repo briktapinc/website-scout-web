@@ -9,9 +9,11 @@
  *   const { chat, aiConfigured } = require('../ai');
  *
  * Contract:
- *  - chat({ task, messages, maxTokens=2000, leadId, note }) — task is one of
+ *  - chat({ task, messages, maxTokens=2000, leadId, note, db }) — task is one of
  *    research|generation|scoring|email|qa|editor|followup. Model resolves from
  *    `ai.model.<task>` falling back to `ai.model.default`.
+ *  - `db` is required (workspace SQLite). Missing db throws AI_DB_REQUIRED so
+ *    concurrent tenants cannot share keys/budget via a module-level handle.
  *  - Throws AI_NOT_CONFIGURED when no key is set (callers fall back to
  *    deterministic template output).
  *  - Throws AUTOMATION_PAUSED when settings.automation_paused = 1.
@@ -19,30 +21,26 @@
  *    cost.daily_budget_usd (a budget <= 0 means unlimited).
  *  - Every call is logged to ai_usage with token counts + cost estimate
  *    (cost.per_1k_prompt default 0.0015, cost.per_1k_completion default 0.002).
- *  - aiConfigured() — true when an API key is set.
+ *  - aiConfigured(db) — true when an API key is set on that workspace db.
  *  - No key material is ever written to logs or error messages.
  */
 
-let _db = null;
-
-/** Inject the better-sqlite3 database instance (used by tests / ipc layer). */
-function setDb(db) { _db = db; }
-
-function getDb(override) {
-  if (override) return override;
-  if (_db) return _db;
-  // Lazily required so this module never crashes at load time when db.js
-  // is provided by another workstream.
-  return require('./db').db;
+function requireDb(db, label = 'db') {
+  if (!db || typeof db.prepare !== 'function') {
+    throw fail('AI_DB_REQUIRED', `${label} is required — pass the workspace database handle.`);
+  }
+  return db;
 }
 
-function getSetting(key, def, dbOverride) {
-  const row = getDb(dbOverride).prepare('SELECT value FROM settings WHERE key = ?').get(key);
+function getSetting(key, def, db) {
+  requireDb(db, 'db');
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
   return row ? row.value : def;
 }
 
-function aiConfigured(dbOverride) {
-  const key = getSetting('ai.api_key', '', dbOverride);
+function aiConfigured(db) {
+  if (!db || typeof db.prepare !== 'function') return false;
+  const key = getSetting('ai.api_key', '', db);
   return !!(key && String(key).trim());
 }
 
@@ -64,7 +62,10 @@ const VALID_TASKS = new Set([
   'research', 'generation', 'scoring', 'email', 'qa', 'editor', 'followup',
 ]);
 
-async function chat({ task, messages, maxTokens = 2000, leadId = null, note = null, db: dbOverride = null } = {}) {
+/** @deprecated No-op — callers must pass db into chat()/aiConfigured(). Kept for IPC compat. */
+function setDb() { /* intentionally empty */ }
+
+async function chat({ task, messages, maxTokens = 2000, leadId = null, note = null, db: dbArg = null } = {}) {
   if (!task || !VALID_TASKS.has(task)) {
     throw fail('INVALID_TASK', `Unknown AI task "${task}".`);
   }
@@ -93,7 +94,7 @@ async function chat({ task, messages, maxTokens = 2000, leadId = null, note = nu
     throw fail('INVALID_MAX_TOKENS', 'maxTokens must be a positive number.');
   }
 
-  const db = getDb(dbOverride);
+  const db = requireDb(dbArg);
 
   const apiKey = getSetting('ai.api_key', '', db);
   if (!apiKey || !String(apiKey).trim()) {

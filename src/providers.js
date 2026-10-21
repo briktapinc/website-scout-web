@@ -399,7 +399,10 @@ function parseCityState(location) {
  * filter — sharper natural-language queries are the main lever.
  */
 function buildTavilyQueries({ category, location, websitePresence }) {
-  const cat = String(category || 'local business').trim() || 'local business';
+  const raw = String(category || '').trim();
+  const cat = (!raw || raw === '*' || /^any$/i.test(raw))
+    ? 'local business'
+    : raw;
   const loc = String(location || '').trim();
   const wp = String(websitePresence || '').trim().toLowerCase();
   const near = loc ? `${cat} near ${loc}` : `${cat} local businesses`;
@@ -617,10 +620,12 @@ class TavilySearchProvider {
         outdatedDesign: false, checkedAt: now,
       };
     }
-    // Lightweight probe — full page analysis can come later.
+    // Lightweight probe — SSRF-safe (validates each hop + pins resolved IP).
     try {
+      const { fetchPublic } = require('../server/urlSafety');
       const t0 = Date.now();
-      const res = await fetch(url, { method: 'GET', redirect: 'follow' });
+      const res = await fetchPublic(url, { method: 'GET', timeoutMs: 15000, maxRedirects: 5 });
+      try { await res.arrayBuffer(); } catch { /* drain */ }
       return {
         reachable: res.ok,
         hasSsl: String(url).startsWith('https'),

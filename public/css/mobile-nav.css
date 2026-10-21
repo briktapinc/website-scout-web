@@ -1,0 +1,200 @@
+/**
+ * BitPype mobile hamburger nav (design asset).
+ * Marker: any ancestor with data-bitpype-mobile-nav="1"
+ * Structure: .bp-nav-toggle (checkbox) + .bp-nav-burger (label) + .bp-nav-panel (nav)
+ * Desktop: panel inline. Mobile: burger visible; panel opens when checkbox checked.
+ * No JavaScript required (checkbox hack) — safe through sanitizeHtml.
+ */
+[data-bitpype-mobile-nav] {
+  --bp-nav-ink: var(--ink, var(--ws-text, #111));
+  --bp-nav-paper: var(--paper, var(--ws-bg, #fff));
+  --bp-nav-line: var(--line, color-mix(in srgb, var(--bp-nav-ink) 16%, transparent));
+  --bp-nav-accent: var(--clay, var(--ws-primary, #0e2a47));
+  position: relative;
+}
+
+[data-bitpype-mobile-nav] .bp-nav-bar,
+[data-bitpype-mobile-nav] .nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+[data-bitpype-mobile-nav] .bp-nav-toggle {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+[data-bitpype-mobile-nav] .bp-nav-burger {
+  display: none;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  padding: 10px;
+  box-sizing: border-box;
+  border: 1px solid var(--bp-nav-line);
+  border-radius: 10px;
+  background: var(--bp-nav-paper);
+  cursor: pointer;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  z-index: 60;
+}
+
+[data-bitpype-mobile-nav] .bp-nav-burger span {
+  display: block;
+  height: 2px;
+  width: 100%;
+  background: var(--bp-nav-ink);
+  border-radius: 2px;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+[data-bitpype-mobile-nav] .bp-nav-panel {
+  display: flex;
+  align-items: center;
+  gap: clamp(14px, 2.5vw, 28px);
+  flex-wrap: wrap;
+}
+
+[data-bitpype-mobile-nav] .bp-nav-panel a {
+  text-decoration: none;
+  color: inherit;
+}
+
+/* WordPress-style one-level submenu (menuParent / .nav-item / li.has-children).
+   No margin-top gap — that drops :hover before the pointer reaches child links. */
+[data-bitpype-mobile-nav] .nav-item,
+[data-bitpype-mobile-nav] .nav-menu > li.has-children,
+[data-bitpype-mobile-nav] li.has-children {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+[data-bitpype-mobile-nav] .nav-sub {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 180px;
+  margin: 0;
+  padding: 8px 0;
+  flex-direction: column;
+  align-items: stretch;
+  list-style: none;
+  z-index: 70;
+  background: var(--bp-nav-paper);
+  border: 1px solid var(--bp-nav-line);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+}
+[data-bitpype-mobile-nav] .nav-sub::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -14px;
+  height: 14px;
+}
+[data-bitpype-mobile-nav] .nav-item.has-children:hover > .nav-sub,
+[data-bitpype-mobile-nav] .nav-item.has-children:focus-within > .nav-sub,
+[data-bitpype-mobile-nav] li.has-children:hover > .nav-sub,
+[data-bitpype-mobile-nav] li.has-children:focus-within > .nav-sub {
+  display: flex;
+}
+[data-bitpype-mobile-nav] .nav-sub a {
+  display: block;
+  padding: 10px 14px;
+  white-space: nowrap;
+}
+
+@media (max-width: 860px) {
+  [data-bitpype-mobile-nav] .bp-nav-burger {
+    display: inline-flex;
+    margin-left: auto;
+  }
+
+  [data-bitpype-mobile-nav] .bp-nav-panel {
+    display: none;
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    order: 10;
+    border-top: 1px solid var(--bp-nav-line);
+    padding: 8px 0 4px;
+    background: var(--bp-nav-paper);
+  }
+
+  [data-bitpype-mobile-nav] .bp-nav-panel a {
+    display: block;
+    padding: 14px 6px;
+    font-weight: 700;
+    border-bottom: 1px solid var(--bp-nav-line);
+  }
+
+  [data-bitpype-mobile-nav] .bp-nav-panel a:last-child {
+    border-bottom: 0;
+  }
+
+  /* Nested items stay visible in the open hamburger panel (no hover needed). */
+  [data-bitpype-mobile-nav] .nav-item,
+  [data-bitpype-mobile-nav] li.has-children {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+  [data-bitpype-mobile-nav] .nav-sub {
+    position: static;
+    display: flex;
+    box-shadow: none;
+    border: 0;
+    border-radius: 0;
+    margin: 0;
+    padding: 0 0 0 12px;
+    background: transparent;
+  }
+  [data-bitpype-mobile-nav] .nav-sub::before {
+    display: none;
+  }
+  [data-bitpype-mobile-nav] .nav-sub a {
+    white-space: normal;
+  }
+
+  [data-bitpype-mobile-nav] .bp-nav-toggle:checked ~ .bp-nav-panel,
+  [data-bitpype-mobile-nav] .bp-nav-toggle:checked + .bp-nav-burger + .bp-nav-panel {
+    display: flex;
+  }
+
+  [data-bitpype-mobile-nav] .bp-nav-toggle:focus-visible + .bp-nav-burger {
+    outline: 3px solid color-mix(in srgb, var(--bp-nav-accent) 45%, transparent);
+    outline-offset: 2px;
+  }
+
+  [data-bitpype-mobile-nav] .bp-nav-toggle:checked + .bp-nav-burger span:nth-child(1) {
+    transform: translateY(8px) rotate(45deg);
+  }
+  [data-bitpype-mobile-nav] .bp-nav-toggle:checked + .bp-nav-burger span:nth-child(2) {
+    opacity: 0;
+  }
+  [data-bitpype-mobile-nav] .bp-nav-toggle:checked + .bp-nav-burger span:nth-child(3) {
+    transform: translateY(-8px) rotate(-45deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-bitpype-mobile-nav] .bp-nav-burger span {
+    transition: none;
+  }
+}

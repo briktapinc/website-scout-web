@@ -1,5 +1,10 @@
 'use strict';
 
+/**
+ * DEPRECATED — do not mount. Product dashboard uses workspace SQLite via domainApi.
+ * This module queries MySQL product tables that are not the runtime source of truth.
+ */
+
 const express = require('express');
 const { query } = require('../db');
 const { getSetting } = require('../workspace');

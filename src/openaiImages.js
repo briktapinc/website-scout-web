@@ -2,7 +2,7 @@
 
 /**
  * OpenAI Images API (POST /v1/images/generations) using the same ai.api_key /
- * ai.base_url as chat. Model from ai.model.image (default gpt-image-1).
+ * ai.base_url as chat. Model from ai.model.image (default gpt-image-2.5-sunburst).
  *
  * Never returns giant base64 to callers for storage in deliverables — files are
  * written to disk; callers should keep path / relative URL only.
@@ -12,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const DEFAULT_MODEL = 'gpt-image-1';
+const DEFAULT_MODEL = 'gpt-image-2.5-sunburst';
 const DEFAULT_SIZE = '1024x1024';
 const DEFAULT_QUALITY = 'low';
 const MAX_N = 4;
@@ -91,7 +91,8 @@ function normalizeSize(raw, model) {
 function normalizeQuality(raw, model) {
   const q = String(raw || DEFAULT_QUALITY).trim().toLowerCase();
   if (isGptImageModel(model)) {
-    if (/^(auto|low|medium|high)$/.test(q)) return q;
+    // gpt-image-2.5+ also supports xhigh / max; older gpt-image models accept up to high.
+    if (/^(auto|low|medium|high|xhigh|max)$/.test(q)) return q;
     return DEFAULT_QUALITY;
   }
   if (/^(standard|hd)$/.test(q)) return q;
@@ -143,6 +144,15 @@ async function generateImages(db, prompt, opts = {}) {
     body.response_format = 'b64_json';
   } else if (quality) {
     body.quality = quality;
+  }
+  // gpt-image models accept transparent background + PNG for logo marks.
+  if (isGptImageModel(model) && opts.background) {
+    const bg = String(opts.background).trim().toLowerCase();
+    if (bg === 'transparent' || bg === 'opaque' || bg === 'auto') body.background = bg;
+  }
+  if (isGptImageModel(model) && opts.output_format) {
+    const fmt = String(opts.output_format).trim().toLowerCase();
+    if (fmt === 'png' || fmt === 'jpeg' || fmt === 'webp') body.output_format = fmt;
   }
 
   let res;
@@ -198,12 +208,29 @@ async function generateImages(db, prompt, opts = {}) {
     } else {
       continue;
     }
-    const ext = mime === 'image/jpeg' ? 'jpg' : (mime === 'image/webp' ? 'webp' : 'png');
-    const filePath = path.join(dir, `gen-${stamp}-${i + 1}.${ext}`);
-    fs.writeFileSync(filePath, buf);
+    let outExt = mime === 'image/jpeg' ? 'jpg' : (mime === 'image/webp' ? 'webp' : 'png');
+    let outMime = mime;
+    let outBuf = buf;
+    try {
+      const imageOptimize = require('./imageOptimize');
+      const opt = await imageOptimize.optimizeBuffer(buf, {
+        fileName: `gen-${stamp}-${i + 1}.${outExt}`,
+        role: 'photo',
+        preferWebp: true,
+      });
+      if (!opt.skipped && opt.buffer && opt.buffer.length) {
+        outBuf = opt.buffer;
+        if (opt.ext) outExt = opt.ext.replace(/^\./, '');
+        if (opt.mime) outMime = opt.mime;
+      }
+    } catch (e) {
+      console.warn('[openaiImages] optimize skip:', e.message || e);
+    }
+    const filePath = path.join(dir, `gen-${stamp}-${i + 1}.${outExt}`);
+    fs.writeFileSync(filePath, outBuf);
     images.push({
       path: filePath,
-      mime,
+      mime: outMime,
       revised_prompt: row.revised_prompt || null,
       // Intentionally omit dataUrl / b64 — keep deliverables and IPC small.
     });

@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>How it works — BitPype</title>
+  <meta name="description" content="See how BitPype designs the site with you, then keeps preview, edits, forms, social posts, and plans in one portal." />
+  <link rel="icon" href="/brand/bitpype-mark.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Figtree:wght@400;600;700&display=swap" rel="stylesheet" />
+  <script>document.documentElement.classList.add('js')</script>
+  <style>
+    :root {
+      --ink: #1c140f;
+      --muted: #5c5148;
+      --cream: #f7f1e8;
+      --paper: #fffaf4;
+      --teal: #0e7a68;
+      --coral: #ef5d45;
+      --gold: #f0b429;
+      --plum: #6d4ea3;
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+      --mock-accent: #0e7a68;
+      --mock-font: "Fraunces", Georgia, serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: Figtree, sans-serif;
+      background: #120e0c;
+      overflow-x: clip;
+    }
+    a { color: inherit; }
+    button { font: inherit; cursor: pointer; }
+    img { display: block; max-width: 100%; }
+    :focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+    .skip {
+      position: absolute; left: -999px; top: 8px; background: #fff; color: #000; padding: 8px 12px; z-index: 50;
+    }
+    .skip:focus { left: 12px; }
+
+    .nav {
+      position: sticky; top: 0; z-index: 30;
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      padding: 14px 22px;
+      background: rgba(18, 14, 12, 0.72);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid rgba(255, 250, 244, 0.08);
+    }
+    .logo {
+      display: inline-flex; align-items: center; gap: 10px;
+      text-decoration: none; color: #fffaf4;
+      font-family: Fraunces, Georgia, serif; font-weight: 700; font-size: 1.35rem; letter-spacing: -0.03em;
+    }
+    .logo img { width: 36px; height: 36px; border-radius: 10px; }
+    .nav-links { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+    .nav-links a { color: rgba(255,250,244,.82); text-decoration: none; font-weight: 700; }
+    .nav-links a:hover { color: #fff; }
+    .nav-login {
+      background: #fffaf4; color: var(--ink) !important;
+      padding: 8px 14px; border-radius: 999px;
+    }
+
+    .hero {
+      position: relative;
+      padding: 18px 22px 28px;
+      background:
+        radial-gradient(700px 420px at 12% 0%, rgba(239, 93, 69, .45), transparent 60%),
+        radial-gradient(640px 480px at 88% 10%, rgba(109, 78, 163, .45), transparent 55%),
+        radial-gradient(520px 360px at 60% 80%, rgba(14, 122, 104, .4), transparent 60%),
+        #120e0c;
+      overflow: hidden;
+    }
+    .aurora {
+      position: absolute; inset: -20%;
+      background: conic-gradient(from 120deg, rgba(239,93,69,.25), rgba(240,180,41,.2), rgba(14,122,104,.25), rgba(109,78,163,.28), rgba(239,93,69,.25));
+      filter: blur(40px);
+      animation: spin 28s linear infinite;
+      pointer-events: none;
+    }
+    @keyframes spin { to { transform: rotate(1turn); } }
+
+    .bento {
+      position: relative; z-index: 1;
+      max-width: 1180px; margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1.15fr 0.95fr 0.9fr;
+      grid-template-areas:
+        "title preview preview"
+        "fonts inbox week";
+      gap: 14px;
+    }
+    .card {
+      position: relative;
+      border-radius: 26px;
+      background: var(--paper);
+      color: var(--ink);
+      box-shadow:
+        0 1px 0 rgba(255,255,255,.7) inset,
+        0 18px 50px rgba(0,0,0,.28);
+      overflow: hidden;
+      animation: rise .8s var(--ease) both;
+    }
+    .card:nth-child(2) { animation-delay: .06s; }
+    .card:nth-child(3) { animation-delay: .12s; }
+    .card:nth-child(4) { animation-delay: .18s; }
+    .card:nth-child(5) { animation-delay: .24s; }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(22px) scale(.98); }
+      to { opacity: 1; transform: none; }
+    }
+    .tilt { transform-style: preserve-3d; transition: transform .18s var(--ease); }
+    .title-card { grid-area: title; padding: 28px 26px 24px; display: flex; flex-direction: column; min-height: 100%; }
+    .kicker {
+      display: inline-flex; align-items: center; gap: 8px;
+      margin: 0 0 14px; padding: 6px 10px 6px 8px; width: fit-content;
+      border-radius: 999px; background: #fff1e4; color: #8a3b28; font-weight: 700; font-size: .92rem;
+    }
+    .kicker i { width: 8px; height: 8px; border-radius: 50%; background: var(--coral); display: block; animation: pulse 1.6s ease infinite; }
+    @keyframes pulse { 50% { transform: scale(1.35); opacity: .7; } }
+    h1 {
+      margin: 0 0 12px;
+      font-family: Fraunces, Georgia, serif;
+      font-size: clamp(3rem, 5.6vw, 5.15rem);
+      line-height: .92; letter-spacing: -0.045em; font-weight: 700;
+    }
+    h1 em {
+      font-style: italic; font-weight: 500;
+      background: linear-gradient(100deg, var(--coral), #d4890b 45%, var(--teal));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .lede { margin: 0 0 16px; color: var(--muted); font-size: 1.08rem; max-width: 36ch; }
+    .cycle { margin: 0 0 18px; font-weight: 700; }
+    .cycle b {
+      display: inline-block; padding: 2px 8px; border-radius: 8px;
+      background: linear-gradient(90deg, #ffe7a8, #ffd0c4); color: #3a2016;
+    }
+    .cta-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: auto; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-height: 48px; padding: 0 16px; border-radius: 14px; border: 0;
+      text-decoration: none; font-weight: 700;
+      transition: transform .2s var(--ease), filter .2s ease;
+    }
+    .btn:hover { transform: translateY(-2px); }
+    .btn-hot { background: linear-gradient(180deg, #ff7d66, var(--coral)); color: #fff; box-shadow: 0 10px 24px rgba(239,93,69,.35); }
+    .btn-ghost { background: #fff; color: var(--ink); border: 1px solid rgba(28,20,15,.12); }
+    .btn-ink { background: var(--ink); color: #fffaf4; }
+
+    .preview-card {
+      grid-area: preview; background: #1b1614; color: #fffaf4; padding: 14px;
+      display: flex; flex-direction: column;
+    }
+    .widget-top, .card-top {
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
+      font-size: .84rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+      color: rgba(255,250,244,.62); margin-bottom: 10px;
+    }
+    .dots { display: flex; gap: 6px; }
+    .dots span { width: 9px; height: 9px; border-radius: 50%; background: #ffb4a6; }
+    .dots span:nth-child(2) { background: #ffe08a; }
+    .dots span:nth-child(3) { background: #8ef0dc; }
+    .browser {
+      border-radius: 18px; overflow: hidden; background: #fffaf4; color: var(--ink);
+      flex: 1; display: flex; flex-direction: column; min-height: 250px;
+    }
+    .browser-nav { display: flex; justify-content: space-between; padding: 12px 14px; font-weight: 700; }
+    .browser-hero {
+      margin: 0 12px; border-radius: 16px; padding: 22px 16px; flex: 1;
+      background: linear-gradient(135deg, var(--mock-accent), #6d4ea3 80%);
+      background-size: 180% 180%;
+      animation: sheen 7s ease infinite;
+      color: #fffaf4;
+    }
+    @keyframes sheen { 50% { background-position: 100% 40%; } }
+    .browser-hero strong {
+      display: block; font-family: var(--mock-font);
+      font-size: clamp(1.7rem, 2.5vw, 2.35rem); line-height: 1; letter-spacing: -0.03em; margin-bottom: 8px;
+    }
+    .pills { display: flex; gap: 8px; margin-top: 12px; }
+    .pills span { background: rgba(255,250,244,.18); border-radius: 999px; padding: 4px 10px; font-size: .8rem; }
+    .browser-bits { display: grid; grid-template-columns: 1.3fr .7fr .7fr; gap: 8px; padding: 12px; }
+    .browser-bits i { display: block; height: 58px; border-radius: 12px; background: linear-gradient(180deg, #f3eadf, #e7d9c8); }
+    .browser-bits i:first-child { background: linear-gradient(135deg, #f7d7cf, #efe6da); }
+
+    .font-card, .inbox-card, .week-card { padding: 16px; }
+    .font-card { grid-area: fonts; }
+    .inbox-card { grid-area: inbox; }
+    .week-card { grid-area: week; background: linear-gradient(160deg, #fff7ea, #ffe1d6 55%, #e5f7f2); }
+    .label { margin: 0 0 6px; font-size: .78rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--coral); }
+    .specimen {
+      margin: 0; font-family: var(--mock-font); font-size: 2.4rem; line-height: .95; letter-spacing: -0.04em;
+      min-height: 2.4em;
+    }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .chip, .tool {
+      border: 1px solid rgba(28,20,15,.12); background: #fff; border-radius: 999px;
+      padding: 6px 10px; font-weight: 700; font-size: .86rem;
+    }
+    .chip[aria-pressed="true"], .tool[aria-pressed="true"] { background: var(--ink); color: #fffaf4; border-color: var(--ink); }
+    .msg {
+      background: #fff; border-radius: 14px; padding: 10px 12px; margin-top: 8px;
+      box-shadow: 0 8px 18px rgba(80,40,20,.06);
+      animation: slide .45s var(--ease);
+    }
+    .msg strong { display: block; }
+    .msg span { color: var(--muted); font-size: .92rem; }
+    @keyframes slide { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+    .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 8px; }
+    .day {
+      aspect-ratio: 1; border-radius: 10px; background: rgba(255,255,255,.55);
+      display: grid; place-items: center; font-size: .72rem; font-weight: 700; color: var(--muted);
+    }
+    .day.on {
+      background: linear-gradient(160deg, var(--gold), var(--coral));
+      color: #fff; animation: pop .35s var(--ease);
+    }
+    @keyframes pop { from { transform: scale(.7); } to { transform: none; } }
+
+    .marquee {
+      background: #1c140f; color: #fffaf4; border-block: 1px solid rgba(255,250,244,.08);
+      overflow: hidden; padding: 12px 0;
+    }
+    .marquee-track {
+      display: flex; gap: 28px; width: max-content;
+      animation: ticker 28s linear infinite;
+      font-weight: 700; letter-spacing: .04em;
+    }
+    .marquee b { color: var(--gold); }
+    @keyframes ticker { to { transform: translateX(-50%); } }
+
+    .board {
+      background:
+        radial-gradient(600px 280px at 0% 0%, rgba(239,93,69,.18), transparent 50%),
+        radial-gradient(500px 280px at 100% 20%, rgba(109,78,163,.16), transparent 50%),
+        var(--cream);
+      padding: 54px 22px 28px;
+    }
+    .board-inner, .final, footer { max-width: 1180px; margin: 0 auto; }
+    .board h2, .band h2, .final h2 {
+      font-family: Fraunces, Georgia, serif;
+      font-size: clamp(2.7rem, 5.5vw, 4.7rem);
+      line-height: .94; letter-spacing: -0.045em; margin: 0 0 10px; font-weight: 700;
+    }
+    .support { margin: 0 0 22px; color: var(--muted); font-size: 1.12rem; max-width: 46ch; }
+    .mosaic {
+      display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px;
+    }
+    .span-7 { grid-column: span 7; }
+    .span-6 { grid-column: span 6; }
+    .span-5 { grid-column: span 5; }
+    .span-4 { grid-column: span 4; }
+    .span-12 { grid-column: span 12; }
+    .feature {
+      padding: 20px; min-height: 240px; display: flex; flex-direction: column;
+      scroll-margin-top: 90px;
+    }
+    html.js .feature { opacity: 0; transform: translateY(24px); animation: none; }
+    html.js .feature.is-in { animation: rise .7s var(--ease) forwards; }
+    .feature h3 {
+      margin: 4px 0 8px; font-family: Fraunces, Georgia, serif;
+      font-size: clamp(1.7rem, 2.4vw, 2.25rem); letter-spacing: -0.03em; line-height: 1.02;
+    }
+    .feature p { margin: 0 0 10px; color: var(--muted); }
+    .next {
+      margin-top: auto; font-weight: 700; color: var(--teal); text-decoration: none;
+    }
+    .next:hover { color: var(--coral); }
+    .tone-coral { background: linear-gradient(180deg, #fff 40%, #ffe8e2); }
+    .tone-teal { background: linear-gradient(180deg, #fff 30%, #e5f6f2); }
+    .tone-gold { background: linear-gradient(180deg, #fff 30%, #fff3d2); }
+    .tone-plum { background: linear-gradient(165deg, #2a2140, #12382f); color: #fffaf4; }
+    .tone-plum p, .tone-plum .label { color: rgba(255,250,244,.78); }
+    .tone-plum .next { color: #ffe08a; }
+    .blocks { display: grid; grid-template-columns: 1.4fr .8fr; gap: 8px; margin-top: 8px; }
+    .block {
+      border-radius: 12px; background: rgba(14,122,104,.12); min-height: 54px;
+      transform-origin: left; animation: grow 1.1s var(--ease) infinite alternate;
+    }
+    .block.tall { min-height: 116px; background: linear-gradient(160deg, rgba(239,93,69,.2), rgba(240,180,41,.25)); animation-delay: .2s; }
+    @keyframes grow { from { transform: scaleX(.92); } to { transform: scaleX(1); } }
+    .frame {
+      margin-top: 8px; border-radius: 16px; background: #fff; border: 1px solid rgba(28,20,15,.08);
+      padding: 12px; transition: max-width .35s var(--ease), margin .35s var(--ease);
+    }
+    .is-phone .frame { max-width: 180px; margin-inline: auto; }
+    .mods { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 8px; }
+    .mod {
+      background: rgba(255,250,244,.1); border: 1px solid rgba(255,250,244,.16);
+      border-radius: 14px; padding: 12px 8px; text-align: center; font-weight: 700; font-size: .9rem;
+    }
+    .mod.on { background: linear-gradient(180deg, rgba(240,180,41,.35), rgba(14,122,104,.35)); }
+    .plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 8px; }
+    .plan {
+      background: #fff; color: var(--ink); border-radius: 16px; padding: 14px;
+      box-shadow: 0 10px 24px rgba(0,0,0,.12);
+    }
+    .plan strong { display: block; font-family: Fraunces, Georgia, serif; font-size: 1.45rem; }
+    .plan.hot { background: linear-gradient(180deg, #ffe7a8, #fff); outline: 2px solid var(--gold); }
+    .tools { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .tool { align-self: flex-start; }
+
+    .band {
+      padding: 28px 22px 64px;
+      background: var(--cream);
+    }
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; list-style: none; margin: 0; padding: 0; }
+    .steps li {
+      margin: 0; padding: 22px; border-radius: 26px; color: #fffaf4; min-height: 220px;
+      box-shadow: 0 16px 40px rgba(40,16,8,.12);
+    }
+    .steps li:nth-child(1) { background: linear-gradient(160deg, #ef5d45, #c83b4a); transform: rotate(-1.2deg); }
+    .steps li:nth-child(2) { background: linear-gradient(160deg, #0e7a68, #146b86); transform: translateY(18px); }
+    .steps li:nth-child(3) { background: linear-gradient(160deg, #6d4ea3, #3d2a78); transform: rotate(1.1deg); }
+    .steps h3 { margin: 8px 0; font-family: Fraunces, Georgia, serif; font-size: 2rem; letter-spacing: -0.03em; }
+    .steps p { margin: 0; color: rgba(255,250,244,.88); }
+    .step-no { font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: .8rem; }
+
+    .final { padding: 10px 22px 72px; }
+    .final-card {
+      border-radius: 32px; padding: clamp(28px, 5vw, 56px);
+      background:
+        radial-gradient(400px 180px at 90% 0%, rgba(240,180,41,.45), transparent 60%),
+        linear-gradient(120deg, #1c140f, #12382f 60%, #3d2a55);
+      color: #fffaf4;
+      box-shadow: 0 24px 60px rgba(0,0,0,.25);
+    }
+    .final .support { color: rgba(255,250,244,.8); }
+    .final .cta-row { margin-top: 18px; }
+    .final .btn-ghost { background: transparent; color: #fffaf4; border-color: rgba(255,250,244,.3); }
+
+    footer {
+      display: flex; flex-wrap: wrap; gap: 14px 28px; justify-content: space-between;
+      padding: 8px 22px 40px; color: rgba(255,250,244,.7);
+    }
+    footer strong { font-family: Fraunces, Georgia, serif; color: #fffaf4; font-size: 1.3rem; }
+    footer nav { display: flex; flex-wrap: wrap; gap: 12px 16px; }
+    footer a { color: rgba(255,250,244,.7); text-decoration: none; font-weight: 700; }
+    footer a:hover { color: #fff; }
+
+    @media (max-width: 980px) {
+      .nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; row-gap: 10px; background: rgba(18, 14, 12, 0.94); }
+      .nav-links { flex: 1 1 100%; flex-wrap: wrap; min-width: 0; overflow: visible; }
+      .nav-links a { flex: none; }
+      .nav-login { white-space: nowrap; }
+      .bento { grid-template-columns: 1fr; grid-template-areas: "title" "preview" "fonts" "inbox" "week"; }
+      .mosaic { grid-template-columns: 1fr; }
+      .span-7, .span-6, .span-5, .span-4, .span-12 { grid-column: auto; }
+      .steps { grid-template-columns: 1fr; }
+      .steps li, .steps li:nth-child(2) { transform: none; }
+      .plans, .mods { grid-template-columns: 1fr 1fr; }
+      .days { grid-template-columns: repeat(4, 1fr); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+      html { scroll-behavior: auto; }
+      html.js .feature { opacity: 1; transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="nav">
+    <a class="logo" href="/"><img src="/brand/bitpype-mark.svg" alt="" width="36" height="36" /> BitPype</a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="/">Home</a>
+      <a href="#design">Design</a>
+      <a href="#edit">Edit</a>
+      <a href="#forms">Forms</a>
+      <a href="/portal" class="nav-login">Client login</a>
+    </nav>
+  </header>
+
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="aurora" aria-hidden="true"></div>
+    <div class="bento">
+      <article class="card title-card tilt">
+        <p class="kicker"><i></i> For owners who would rather serve customers</p>
+        <h1 id="hero-title">A desk for the <em>whole</em> website.</h1>
+        <p class="lede">Design, preview, edits, forms, social, and plans sit together. You run the business. The portal keeps the rest within reach.</p>
+        <p class="cycle">Live on the desk: <b data-cycle>the preview</b></p>
+        <div class="cta-row">
+          <a class="btn btn-hot" href="mailto:team@bitpype.com?subject=BitPype%20support">Talk with us</a>
+          <a class="btn btn-ghost" href="#design">Open the cards</a>
+        </div>
+      </article>
+
+      <article class="card preview-card tilt" aria-label="Sample website preview">
+        <div class="widget-top"><div class="dots" aria-hidden="true"><span></span><span></span><span></span></div><span>Preview widget</span></div>
+        <div class="browser">
+          <div class="browser-nav"><span>Harbor &amp; Rye</span><span>Menu</span></div>
+          <div class="browser-hero">
+            <strong data-specimen>Bread, coffee, a window seat.</strong>
+            <span>The same page, ready for a phone check or a publish.</span>
+            <div class="pills"><span>Desktop</span><span>Phone</span><span>Publish</span></div>
+          </div>
+          <div class="browser-bits" aria-hidden="true"><i></i><i></i><i></i></div>
+        </div>
+      </article>
+
+      <article class="card font-card tilt">
+        <p class="label">Font widget</p>
+        <p class="specimen" data-font-name>Fraunces</p>
+        <div class="chips">
+          <button type="button" class="chip" data-font="&quot;Fraunces&quot;, Georgia, serif" data-name="Fraunces" aria-pressed="true">Serif</button>
+          <button type="button" class="chip" data-font="Figtree, sans-serif" data-name="Figtree" aria-pressed="false">Sans</button>
+          <button type="button" class="chip" data-font="Georgia, serif" data-name="Georgia" aria-pressed="false">Classic</button>
+        </div>
+      </article>
+
+      <article class="card inbox-card tilt">
+        <p class="label">Form inbox</p>
+        <div data-inbox>
+          <div class="msg"><strong>June · table for four</strong><span>Saturday, window if you have it.</span></div>
+        </div>
+        <button type="button" class="tool" data-form-add style="margin-top:10px">Drop in a note</button>
+      </article>
+
+      <article class="card week-card tilt">
+        <p class="label">Social week</p>
+        <p style="margin:0;font-weight:700">Posts lined up with the shop.</p>
+        <div class="days" data-week>
+          <div class="day">M</div><div class="day">T</div><div class="day">W</div><div class="day">T</div><div class="day">F</div><div class="day">S</div><div class="day">S</div>
+        </div>
+        <button type="button" class="tool" data-week-fill style="margin-top:10px">Fill the week</button>
+      </article>
+    </div>
+  </section>
+
+  <div class="marquee" aria-hidden="true">
+    <div class="marquee-track">
+      <span>Design the site</span><b>→</b><span>Preview it</span><b>→</b><span>Edit fonts and colors</span><b>→</b><span>Catch the forms</span><b>→</b><span>Plan the posts</span><b>→</b><span>Pick a plan</span><b>→</b>
+      <span>Design the site</span><b>→</b><span>Preview it</span><b>→</b><span>Edit fonts and colors</span><b>→</b><span>Catch the forms</span><b>→</b><span>Plan the posts</span><b>→</b><span>Pick a plan</span><b>→</b>
+    </div>
+  </div>
+
+  <main id="main" class="board">
+    <div class="board-inner">
+      <h2>Pick up a card. It leads to the next.</h2>
+      <p class="support">Each widget is a real part of the portal. Try the colors, the type, a form note, or a week of posts — then follow the link into the next card.</p>
+      <div class="mosaic">
+        <article class="card feature tone-coral span-7" id="design" data-chapter="design">
+          <p class="label">01 · Design</p>
+          <h3>We build the site around the business.</h3>
+          <p>What you offer, who walks in, and how it should sound. You are not asked to learn hosting or a pile of plugins.</p>
+          <div class="blocks" aria-hidden="true"><div class="block tall"></div><div class="block"></div><div class="block"></div></div>
+          <a class="next" href="#preview">Then preview it the way a visitor would →</a>
+        </article>
+
+        <article class="card feature tone-teal span-5" id="preview" data-chapter="preview">
+          <p class="label">02 · Preview</p>
+          <h3>Look before it goes live.</h3>
+          <p>Desktop or phone, then publish from the same portal.</p>
+          <div class="tools">
+            <button type="button" class="tool" data-device="desk" aria-pressed="true">Desktop</button>
+            <button type="button" class="tool" data-device="phone" aria-pressed="false">Phone</button>
+          </div>
+          <div class="frame"><strong style="font-family:Fraunces,Georgia,serif;font-size:1.4rem">Open today</strong><p style="margin:6px 0 0">Hours, headline, button — check them here.</p></div>
+          <a class="next" href="#edit">Then change a line or the type →</a>
+        </article>
+
+        <article class="card feature span-6" id="edit" data-chapter="edit">
+          <p class="label">03 · Edit</p>
+          <h3>Fonts, colors, photos, or a request.</h3>
+          <p>Set a site font, a heading font, or the type on one line. Swap a photo or the logo. Or send the change to us.</p>
+          <p class="specimen" style="font-size:2rem" data-edit-title>Harbor &amp; Rye</p>
+          <div class="tools" role="group" aria-label="Sample colors">
+            <button type="button" class="chip" data-color="#0e7a68" aria-pressed="true">Teal</button>
+            <button type="button" class="chip" data-color="#ef5d45" aria-pressed="false">Coral</button>
+            <button type="button" class="chip" data-color="#f0b429" aria-pressed="false">Gold</button>
+            <button type="button" class="chip" data-color="#6d4ea3" aria-pressed="false">Plum</button>
+          </div>
+          <a class="next" href="#forms">Then give people a way to write in →</a>
+        </article>
+
+        <article class="card feature tone-gold span-6" id="forms" data-chapter="forms">
+          <p class="label">04 · Forms</p>
+          <h3>The form on the page, the note in your hands.</h3>
+          <p>Free emails each submission. Standard and Premium also keep an inbox in the portal. Premium can encrypt them.</p>
+          <button type="button" class="tool" data-form-add>Send a sample note</button>
+          <div data-inbox-feature>
+            <div class="msg"><strong>June · table for four</strong><span>Saturday, window if you have it.</span></div>
+          </div>
+          <a class="next" href="#social">Then tell people about the week →</a>
+        </article>
+
+        <article class="card feature span-5" id="social" data-chapter="social">
+          <p class="label">05 · Social</p>
+          <h3>A week of posts, next to the site.</h3>
+          <p>Draft the calendar in the portal. Images use credits on Free and Standard. Premium includes them and can schedule.</p>
+          <button type="button" class="tool" data-week-fill>Fill this week</button>
+          <div class="days" data-week style="margin-top:10px">
+            <div class="day on">Rye</div><div class="day on">Window</div><div class="day">W</div><div class="day">T</div><div class="day">F</div><div class="day">S</div><div class="day">S</div>
+          </div>
+          <a class="next" href="#modules">Then grow the site itself →</a>
+        </article>
+
+        <article class="card feature tone-plum span-7" id="modules" data-chapter="modules">
+          <p class="label">06 · Modules</p>
+          <h3>Blog, shop, courses, gallery, directory.</h3>
+          <p>On Standard and Premium the same site can grow these without a second platform.</p>
+          <div class="mods" data-mods>
+            <div class="mod">Blog</div><div class="mod">Shop</div><div class="mod">Courses</div><div class="mod">Gallery</div><div class="mod">Directory</div>
+          </div>
+          <a class="next" href="#plans">Then choose how much help you want →</a>
+        </article>
+
+        <article class="card feature span-12" id="plans" data-chapter="plans">
+          <p class="label">07 · Plans</p>
+          <h3>Free to begin. More help when you want it.</h3>
+          <div class="plans">
+            <div class="plan"><strong>Free</strong><span>Site, inline edits, preview. Forms by email. Design requests.</span></div>
+            <div class="plan"><strong>Standard</strong><span>Form inbox, site modules, monthly support.</span></div>
+            <div class="plan hot"><strong>Premium</strong><span>Weekly support, social images included, scheduling.</span></div>
+          </div>
+          <a class="next" href="#start">Ready to bring the website over →</a>
+        </article>
+      </div>
+    </div>
+  </main>
+
+  <section class="band" aria-labelledby="process-title">
+    <div class="board-inner">
+      <h2 id="process-title">How a week with us feels.</h2>
+      <ol class="steps">
+        <li><span class="step-no">First</span><h3>We learn the shop</h3><p>What you sell, who you serve, and what “good” looks like when someone finds you.</p></li>
+        <li><span class="step-no">Then</span><h3>You watch it form</h3><p>Previews while it is still easy to change. No surprise reveal at the end.</p></li>
+        <li><span class="step-no">After</span><h3>The desk stays yours</h3><p>Edit, request a change, read a form, or line up posts. Use all of it, or only the parts you want.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="final" id="start">
+    <div class="final-card">
+      <h2>Bring the website over here.</h2>
+      <p class="support">No site yet, a site that needs a partner, or a login you already have. We take the weight and leave you the controls.</p>
+      <div class="cta-row">
+        <a class="btn btn-hot" href="mailto:team@bitpype.com?subject=BitPype%20support">Email team@bitpype.com</a>
+        <a class="btn btn-ghost" href="/portal">Client login</a>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div><strong>BitPype</strong><p style="margin:6px 0 0">Online presence, handled with you.</p></div>
+    <nav aria-label="Footer">
+      <a href="/">Home</a>
+      <a href="/portal">Client portal</a>
+      <a href="/app">Team login</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="mailto:team@bitpype.com">team@bitpype.com</a>
+    </nav>
+  </footer>
+
+  <script>
+    (function () {
+      var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      document.documentElement.classList.add('js');
+      if (reduce) document.querySelectorAll('.feature').forEach(function (el) { el.classList.add('is-in'); });
+
+      var phrases = ['the preview', 'a font you pick', 'a form note', 'a week of posts', 'a plan that fits'];
+      var cycle = document.querySelector('[data-cycle]');
+      var pi = 0;
+      function tickPhrase() {
+        if (!cycle) return;
+        pi = (pi + 1) % phrases.length;
+        cycle.textContent = phrases[pi];
+      }
+      if (!reduce) setInterval(tickPhrase, 2200);
+
+      var names = ['Fraunces', 'Figtree', 'Georgia'];
+      var stacks = ['"Fraunces", Georgia, serif', 'Figtree, sans-serif', 'Georgia, serif'];
+      var fi = 0;
+      var fontName = document.querySelector('[data-font-name]');
+      var specimen = document.querySelector('[data-specimen]');
+      function applyFont(i, fromUser) {
+        fi = i;
+        document.documentElement.style.setProperty('--mock-font', stacks[i]);
+        if (fontName) fontName.textContent = names[i];
+        document.querySelectorAll('[data-font]').forEach(function (b, n) {
+          b.setAttribute('aria-pressed', n === i ? 'true' : 'false');
+        });
+        if (fromUser) window.clearInterval(fontTimer);
+      }
+      var fontTimer = reduce ? 0 : setInterval(function () { applyFont((fi + 1) % names.length, false); }, 2600);
+      document.querySelectorAll('[data-font]').forEach(function (btn, n) {
+        btn.addEventListener('click', function () { applyFont(n, true); });
+      });
+
+      document.querySelectorAll('[data-color]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.documentElement.style.setProperty('--mock-accent', btn.getAttribute('data-color'));
+          var title = document.querySelector('[data-edit-title]');
+          if (title) title.style.color = btn.getAttribute('data-color');
+          document.querySelectorAll('[data-color]').forEach(function (b) {
+            b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+          });
+        });
+      });
+
+      var preview = document.querySelector('.preview-card');
+      document.querySelectorAll('[data-device]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var phone = btn.getAttribute('data-device') === 'phone';
+          var card = document.getElementById('preview');
+          if (card) card.classList.toggle('is-phone', phone);
+          if (preview) preview.classList.toggle('is-phone', phone);
+          document.querySelectorAll('[data-device]').forEach(function (b) {
+            b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+          });
+        });
+      });
+
+      var notes = [
+        ['Leo · catering', 'Pastry for twenty on Friday?'],
+        ['Amina · hours', 'Open Monday evenings now?'],
+        ['Chris · wholesale', 'A standing bread order.']
+      ];
+      var noteAt = 0;
+      function addNote(box) {
+        if (!box) return;
+        var note = notes[noteAt % notes.length];
+        noteAt += 1;
+        var el = document.createElement('div');
+        el.className = 'msg';
+        var strong = document.createElement('strong');
+        strong.textContent = note[0];
+        var span = document.createElement('span');
+        span.textContent = note[1];
+        el.appendChild(strong);
+        el.appendChild(span);
+        box.insertBefore(el, box.firstChild);
+        while (box.children.length > 3) box.removeChild(box.lastChild);
+      }
+      document.querySelectorAll('[data-form-add]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          addNote(btn.parentElement.querySelector('[data-inbox], [data-inbox-feature]'));
+        });
+      });
+      var heroInbox = document.querySelector('[data-inbox]');
+      if (!reduce) setInterval(function () { addNote(heroInbox); }, 3200);
+
+      var posts = ['Rye', 'Window', 'Jam', 'Tart', 'Latte', 'Hours', 'Pick'];
+      function fillWeek(root) {
+        if (!root) return;
+        root.querySelectorAll('.day').forEach(function (day, i) {
+          day.classList.add('on');
+          day.textContent = posts[i] || day.textContent;
+        });
+      }
+      document.querySelectorAll('[data-week-fill]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          fillWeek(btn.parentElement.querySelector('[data-week]'));
+        });
+      });
+      var heroWeek = document.querySelector('.week-card [data-week]');
+      var dayAt = 0;
+      if (!reduce && heroWeek) {
+        setInterval(function () {
+          var days = heroWeek.querySelectorAll('.day');
+          if (dayAt >= days.length) {
+            days.forEach(function (d, i) { d.classList.remove('on'); d.textContent = 'MTWTFSS'[i]; });
+            dayAt = 0;
+            return;
+          }
+          days[dayAt].classList.add('on');
+          days[dayAt].textContent = posts[dayAt];
+          dayAt += 1;
+        }, 700);
+      }
+
+      var mods = document.querySelectorAll('[data-mods] .mod');
+      var modAt = 0;
+      if (!reduce && mods.length) {
+        setInterval(function () {
+          mods.forEach(function (m, i) { m.classList.toggle('on', i === modAt); });
+          modAt = (modAt + 1) % mods.length;
+        }, 900);
+      }
+
+      if (!reduce && window.matchMedia('(pointer: fine)').matches) {
+        document.querySelectorAll('.tilt').forEach(function (card) {
+          card.addEventListener('pointermove', function (e) {
+            var r = card.getBoundingClientRect();
+            var x = (e.clientX - r.left) / r.width - 0.5;
+            var y = (e.clientY - r.top) / r.height - 0.5;
+            card.style.transform = 'rotateX(' + (-y * 5) + 'deg) rotateY(' + (x * 6) + 'deg)';
+          });
+          card.addEventListener('pointerleave', function () { card.style.transform = ''; });
+        });
+      }
+
+      if ('IntersectionObserver' in window) {
+        var io = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (entry.isIntersecting) entry.target.classList.add('is-in');
+          });
+        }, { threshold: 0.2 });
+        document.querySelectorAll('.feature').forEach(function (el) { io.observe(el); });
+      } else {
+        document.querySelectorAll('.feature').forEach(function (el) { el.classList.add('is-in'); });
+      }
+
+      document.documentElement.dataset.homeReady = '1';
+    })();
+  </script>
+</body>
+</html>

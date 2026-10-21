@@ -6,7 +6,7 @@
  * working if notifications, trigger files, or shell commands fail.
  *
  * meta.reason vocabulary (watchers can filter):
- *   assigned | redesign | improvements | questions_answered | refreshed | queue
+ *   assigned | redesign | improvements | questions_answered | refreshed | queue | chatbot
  *
  * Settings (all optional):
  *   design.agent_notify          — "1" (default) / "0" desktop Notification
@@ -14,17 +14,21 @@
  *                                  {{reason}}, {{status}}, {{message}}
  *   design.agent_trigger_file    — override path for the JSON trigger file
  *                                  (default: <db-dir>/design-agent-trigger.json)
- *   design.agent_webhook_url     — http(s) URL; POSTed only for redesign|
- *                                  improvements submissions (empty = skip)
+ *   design.agent_webhook_url     — http(s) URL; POSTed for redesign|
+ *                                  improvements|chatbot (empty = skip)
  *   design.agent_webhook_secret  — optional; sent as Authorization: Bearer and
  *                                  X-Webhook-Secret when non-empty
+ *
+ * Chatbot boundary: reason=chatbot means the CLIENT agent should use portal
+ * MCP chatbot.* tools only — never admin design.* / lead.* or a workspace ws_ token.
  */
 
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
-const WEBHOOK_REASONS = new Set(['redesign', 'improvements']);
+// redesign|improvements: design change flow. chatbot: visitor chat needs client MCP reply.
+const WEBHOOK_REASONS = new Set(['redesign', 'improvements', 'chatbot']);
 const WEBHOOK_TIMEOUT_MS = 8000;
 
 function getSetting(db, key, def = '') {
@@ -87,7 +91,7 @@ function lookupJobTitle(db, jobId) {
   }
 }
 
-/** JSON body for redesign/improvements webhook POSTs. */
+/** JSON body for redesign/improvements/chatbot webhook POSTs. */
 function buildWebhookPayload(meta = {}) {
   const reason = String(meta.reason || '').slice(0, 80);
   const jobId = meta.jobId != null && Number.isFinite(Number(meta.jobId))
@@ -99,10 +103,19 @@ function buildWebhookPayload(meta = {}) {
     : null;
   return {
     job_id: jobId,
+    session_id: meta.sessionId != null && Number.isFinite(Number(meta.sessionId))
+      ? Number(meta.sessionId)
+      : (meta.session_id != null && Number.isFinite(Number(meta.session_id)) ? Number(meta.session_id) : null),
+    lead_id: meta.leadId != null && Number.isFinite(Number(meta.leadId))
+      ? Number(meta.leadId)
+      : (meta.lead_id != null && Number.isFinite(Number(meta.lead_id)) ? Number(meta.lead_id) : null),
     request_kind: (reason === 'redesign' || reason === 'improvements') ? reason : null,
     reason: reason || null,
     status,
     title,
+    mcp_hint: reason === 'chatbot'
+      ? 'Client MCP only: chatbot.pending / chatbot.next / chatbot.reply. Do not use admin design.* or lead.* tools.'
+      : (meta.mcpHint || null),
     timestamp: meta.timestamp || new Date().toISOString(),
   };
 }
@@ -202,7 +215,7 @@ function agentTriggerStatus(db) {
     webhookConfigured: !!webhookUrl,
     webhookSecretConfigured: !!webhookSecret,
     lastPayload,
-    hint: 'Queuing waiting_on_agent (assign, redesign, improve, email submit, questions answered) writes this file and may desktop-notify / run the configured command. Redesign/improvements also POST design.agent_webhook_url when set. Claim work with design.next — no separate fire tool.',
+    hint: 'Queuing waiting_on_agent (assign, redesign, improve, email submit, questions answered, chatbot) writes this file and may desktop-notify / run the configured command. Redesign/improvements/chatbot also POST design.agent_webhook_url when set. Design: design.next. Chatbot: client MCP chatbot.pending — never admin tools from visitor chat.',
   };
 }
 
@@ -215,7 +228,7 @@ function showDesktopNotification(payload) {
     }
     const jobBit = payload.job_id != null ? `#${payload.job_id}` : 'job';
     const n = new Notification({
-      title: 'Website Scout — design agent needed',
+      title: 'Bitpype — design agent needed',
       body: `${jobBit} is waiting_on_agent (${payload.reason}). Claim with MCP design.next.`,
     });
     n.show();
@@ -286,12 +299,20 @@ function fireAgentTriggers(db, meta = {}) {
   const payload = {
     at: new Date().toISOString(),
     job_id: meta.jobId != null && Number.isFinite(Number(meta.jobId)) ? Number(meta.jobId) : null,
+    session_id: meta.sessionId != null && Number.isFinite(Number(meta.sessionId))
+      ? Number(meta.sessionId)
+      : null,
+    lead_id: meta.leadId != null && Number.isFinite(Number(meta.leadId))
+      ? Number(meta.leadId)
+      : null,
     reason,
     // Same vocabulary as design_jobs.request_kind when reason is redesign|improvements
     request_kind: (reason === 'redesign' || reason === 'improvements') ? reason : null,
     status,
     message: String(meta.message || '').slice(0, 500),
-    mcp_hint: 'Call design.next or design.pending',
+    mcp_hint: reason === 'chatbot'
+      ? (meta.mcpHint || 'Client MCP only: chatbot.pending / chatbot.next / chatbot.reply / chatbot.escalate. Never admin design.* / lead.* or workspace ws_ tokens.')
+      : 'Call design.next or design.pending',
   };
 
   setImmediate(() => {
@@ -334,9 +355,12 @@ function fireAgentTriggers(db, meta = {}) {
           jobId: payload.job_id,
           reason: payload.reason,
           status: payload.status,
+          sessionId: payload.session_id,
+          leadId: payload.lead_id,
+          mcpHint: payload.mcp_hint,
         });
         if (wh && wh.skipped) {
-          /* empty URL or non-redesign/improvements reason */
+          /* empty URL or non-webhook reason */
         } else if (wh && wh.ok) {
           logActivity(db, `Agent webhook posted (job #${payload.job_id ?? '?'}, ${payload.reason}).`);
         } else {

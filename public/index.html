@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Website Scout</title>
-  <link rel="stylesheet" href="/styles.css" />
+  <title>Bitpype</title>
+  <link rel="stylesheet" href="/styles.css?v=preview-toolbar-row" />
 </head>
 <body>
   <div id="auth-gate" class="auth-gate hidden"></div>
@@ -12,9 +12,9 @@
   <div id="app-shell" class="app-shell hidden">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true">WS</span>
+        <span class="brand-mark" aria-hidden="true">BP</span>
         <span class="brand-copy">
-          <span class="brand-name">Website Scout</span>
+          <span class="brand-name">Bitpype</span>
           <span class="brand-tag">Local business desk</span>
         </span>
         <button type="button" class="sidebar-close" id="sidebar-close" aria-label="Close menu">&times;</button>
@@ -32,9 +32,17 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4zM4 10h16M8 6V4m8 2V4"/></svg>
           Websites
         </a>
+        <a href="#/domains" data-route="domains">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zm0 0c2.5 2.5 4 5.5 4 9s-1.5 6.5-4 9m0-18c-2.5 2.5-4 5.5-4 9s1.5 6.5 4 9M3.5 9h17M3.5 15h17"/></svg>
+          Domains
+        </a>
         <a href="#/design" data-route="design">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16l4-8 4 6 3-4 5 6H4zM8 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>
           Design
+        </a>
+        <a href="#/social" data-route="social">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm10 2a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM3 19c.5-2.8 2.8-4.5 5.5-4.5S13.5 16.2 14 19M15 15.2c2.2.3 4 1.6 4.7 3.8"/></svg>
+          Social
         </a>
         <a href="#/outreach" data-route="outreach">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4zM4 7l8 6 8-6"/></svg>
@@ -65,7 +73,7 @@
           Admin
         </a>
       </nav>
-      <a href="#/settings" id="shell-automation" class="shell-status" title="Click to pause / resume automation">Checking automation…</a>
+      <a href="#/settings/automation" id="shell-automation" class="shell-status" title="Click to pause / resume automation">Checking automation…</a>
     </aside>
     <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
 
@@ -85,7 +93,9 @@
   </div>
 
   <div id="toast-host" class="toast-host" aria-live="polite"></div>
-  <script src="/js/api.js"></script>
-  <script src="/js/app.js"></script>
+  <script src="/js/fonts.js?v=fonts1"></script>
+  <script src="/js/api.js?v=security-r9-errors1"></script>
+  <script src="/js/captcha.js"></script>
+  <script src="/js/app.js?v=security-r5-preview1"></script>
 </body>
 </html>

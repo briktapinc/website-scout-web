@@ -1,0 +1,33 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),crypto=require('node:crypto');
+const root=path.resolve(process.env.BITPYPE_TEST_ROOT||path.join(__dirname,'..')),results=[];
+function load(file,mocks,env={}){const module={exports:{}};vm.runInNewContext(fs.readFileSync(path.join(root,file),'utf8'),{module,exports:module.exports,require:n=>{if(n in mocks)return mocks[n];if(!n.startsWith('.'))return require(n);throw Error('Unexpected import '+n);},process:{env},console,URL,URLSearchParams,Buffer,Date});return module.exports;}
+const urls=load('server/appUrls.js',{'./stripeClient':{appUrl:()=> 'https://bitpype.test/'}});
+const qs=new URLSearchParams({connected:'1',leadId:'2',fb:'1',ig:'0'});
+function check(name,fn){fn();results.push(name);}
+async function main(){
+ check('staff routes and query encoding',()=>{assert.equal(urls.staffPath('reset/fixture'),'/app#/reset/fixture');assert.equal(urls.staffPath('billing',{checkout:'success',plan:'a & b'}),'/app#/billing?checkout=success&plan=a+%26+b');});
+ check('absolute staff URL uses app shell',()=>assert.equal(urls.staffUrl('invite/fixture'),'https://bitpype.test/app#/invite/fixture'));
+ check('legacy and current social hashes normalize to app',()=>{for(const raw of ['#/social?campaignId=9','/#/social?campaignId=9','/app#/social?campaignId=9','https://bitpype.test/#/social?campaignId=9']){const out=new URL(urls.socialReturnPath(raw,qs),'https://bitpype.test');assert.equal(out.pathname,'/app');assert(out.hash.includes('campaignId=9'));assert(out.hash.includes('connected=1'));}});
+ check('client social returns remain on client routes',()=>{for(const raw of ['/portal#/social','/client?panel=social','https://bitpype.test/portal?panel=social']){const out=new URL(urls.socialReturnPath(raw,qs),'https://bitpype.test');assert(['/portal','/client'].includes(out.pathname));assert.equal(out.searchParams.get('connected'),'1');assert.equal(out.searchParams.get('panel'),'social');}});
+ check('unapproved social destinations use staff fallback',()=>{for(const raw of ['', 'https://evil.test/app#/social','//evil.test/portal','javascript:alert(1)','/portal-other'])assert(urls.socialReturnPath(raw,qs).startsWith('/app#/social?'));});
+ const mails=[],user={id:1,email:'fixture@example.invalid',name:'Fixture',status:'active',stripe_customer_id:'cus_fixture',subscription_status:'none',billing_plan:'free'};
+ const fakeCrypto={...crypto,randomBytes:()=>Buffer.alloc(24,1)};
+ const reset=load('server/passwordReset.js',{crypto:fakeCrypto,bcryptjs:{},'./db':{query:async()=>[],driver:()=> 'sqlite'},'./workspace':{findUserByEmail:async()=>user},'./appUrls':urls,'./mailer':{sendPlatformMail:async m=>mails.push(m)}});
+ await reset.requestReset(user.email);assert.equal(new URL(mails.at(-1).cta.url).pathname,'/app');assert(new URL(mails.at(-1).cta.url).hash.startsWith('#/reset/'));results.push('reset email points to public staff form with synthetic token');
+ const invites=load('server/invites.js',{crypto:fakeCrypto,'./db':{query:async()=>[],driver:()=> 'sqlite'},'./appUrls':urls,'./mailer':{sendPlatformMail:async m=>mails.push(m)}});
+ await invites.createInvite({workspaceId:1,email:user.email,role:'member',invitedBy:1});assert.equal(new URL(mails.at(-1).cta.url).pathname,'/app');assert(new URL(mails.at(-1).cta.url).hash.startsWith('#/invite/'));results.push('invite email points to staff login with synthetic token');
+ const sessions=[],portals=[],stripe={checkout:{sessions:{create:async p=>{sessions.push(p);return {id:'cs_fixture',url:'https://checkout.invalid/fixture'};}}},billingPortal:{sessions:{create:async p=>{portals.push(p);return {url:'https://billing.invalid/fixture'};}}}};
+ const billing=load('server/billing.js',{'./db':{query:async sql=>sql.includes('workspace_members')?[{workspace_id:1}]:[user],driver:()=> 'sqlite'},'./platform':{getPlatformSetting:async()=> '0'},'./plans':{PLAN_FREE:'free',PLAN_STANDARD:'standard',PLAN_PREMIUM:'premium',normalizePlanId:p=>p,getPlan:()=>({}),isPaidPlan:p=>['standard','premium'].includes(p)},'./stripeClient':{getStripe:async()=>stripe,getPriceIdForPlan:async()=> 'price_fixture',integrationId:()=> 'fixture'},'./credits':{packConfig:async()=>({priceId:'price_credits_fixture',packAmount:100})},'./appUrls':urls});
+ await billing.createCheckoutSession(1,'standard');assert.equal(sessions.at(-1).success_url,'https://bitpype.test/app#/billing?checkout=success&plan=standard');assert.equal(sessions.at(-1).cancel_url,'https://bitpype.test/app#/billing?checkout=cancel');results.push('subscription checkout defaults return to staff app');
+ await billing.createCreditsCheckoutSession(1,1);assert.equal(sessions.at(-1).success_url,'https://bitpype.test/app#/billing?checkout=credits_success');assert.equal(sessions.at(-1).cancel_url,'https://bitpype.test/app#/billing?checkout=cancel');results.push('credit checkout defaults return to staff app');
+ await billing.createPortalSession(1);assert.equal(portals.at(-1).return_url,'https://bitpype.test/app#/billing');results.push('billing portal returns to staff app');
+ await billing.createCheckoutSession(1,'standard',{successUrl:'https://bitpype.test/portal?checkout=success',cancelUrl:'https://bitpype.test/portal?checkout=cancel'});assert(sessions.at(-1).success_url.includes('/portal?'));assert(sessions.at(-1).cancel_url.includes('/portal?'));results.push('explicit client checkout return URLs preserved');
+ const routes=[];const router={get(p,...handlers){routes.push({p,handlers});},post(){}};
+ load('server/routes/socialPublic.js',{express:{Router:()=>router},'../domain':{socialOauthCallback:async()=>({leadId:2,facebook:1,instagram:0,returnTo:'/#/social?campaignId=9'})},'../../src/socialMedia':{},'../captcha':{requireCaptcha:()=>()=>{}},'../rateLimit':{rateLimit:()=>()=>{}},'../workspaceExists':{assertWorkspaceExists:async()=>{}},'../appUrls':urls},{SESSION_SECRET:'synthetic-secret'});
+ const body=Buffer.from(JSON.stringify({w:1,l:2})).toString('base64url'),sig=crypto.createHmac('sha256','synthetic-secret').update(body).digest('base64url');let destination;
+ await routes.find(r=>r.p==='/meta/callback').handlers.at(-1)({query:{code:'fixture',state:body+'.'+sig}},{redirect(v){destination=v;},status(){return this;},send(v){throw Error(v);}});
+ assert(destination.startsWith('/app#/social?'));assert(destination.includes('campaignId=9'));results.push('signed social callback uses normalized staff return');
+ console.log(JSON.stringify({passed:true,groups:results.length,checks:results}));
+}
+main().catch(e=>{console.error(e);process.exitCode=1;});

@@ -671,26 +671,24 @@ function analyzeQuality(html, text, url, loadTimeMs, ok) {
 }
 
 async function fetchHtml(url) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), FETCH_MS);
   const t0 = Date.now();
   try {
-    const res = await fetch(url, {
+    const { fetchPublic } = require('../server/urlSafety');
+    const res = await fetchPublic(url, {
       method: 'GET',
-      redirect: 'follow',
-      signal: ctrl.signal,
+      timeoutMs: FETCH_MS,
+      maxBytes: MAX_HTML,
+      maxRedirects: 5,
       headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml' },
     });
     const ct = String(res.headers.get('content-type') || '');
     let html = '';
     if (res.ok && /html|text\/plain|xml|css|javascript|json/i.test(ct || 'html')) {
       const buf = await res.arrayBuffer();
-      const slice = buf.byteLength > MAX_HTML ? buf.slice(0, MAX_HTML) : buf;
-      html = new TextDecoder('utf-8', { fatal: false }).decode(slice);
+      html = new TextDecoder('utf-8', { fatal: false }).decode(buf);
     } else if (res.ok && !ct) {
       const buf = await res.arrayBuffer();
-      const slice = buf.byteLength > MAX_HTML ? buf.slice(0, MAX_HTML) : buf;
-      html = new TextDecoder('utf-8', { fatal: false }).decode(slice);
+      html = new TextDecoder('utf-8', { fatal: false }).decode(buf);
     }
     return {
       ok: res.ok,
@@ -708,8 +706,6 @@ async function fetchHtml(url) {
       loadTimeMs: Date.now() - t0,
       error: String(err && err.message || err).slice(0, 200),
     };
-  } finally {
-    clearTimeout(timer);
   }
 }
 

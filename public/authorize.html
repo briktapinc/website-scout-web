@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Authorize MCP · BitPype</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Figtree:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="icon" href="/brand/bitpype-mark.svg" type="image/svg+xml" />
+  <style>
+    :root {
+      --ink: #1c140f;
+      --muted: #5c5148;
+      --cream: #f4efe6;
+      --teal: #0e7a68;
+      --coral: #c44732;
+      --line: rgba(28, 20, 15, 0.12);
+      --err: #9b2c2c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Figtree, sans-serif;
+      color: var(--ink);
+      line-height: 1.5;
+      background:
+        radial-gradient(880px 420px at 100% -8%, rgba(239, 93, 69, 0.14), transparent 58%),
+        radial-gradient(720px 380px at -12% 8%, rgba(14, 122, 104, 0.1), transparent 52%),
+        var(--cream);
+    }
+    .wrap { max-width: 440px; margin: 0 auto; padding: 40px 18px 64px; }
+    .logo {
+      display: inline-flex; align-items: center; gap: 10px;
+      text-decoration: none; color: var(--ink);
+      font-family: Fraunces, Georgia, serif; font-weight: 700; font-size: 1.25rem;
+    }
+    .logo img { width: 32px; height: 32px; border-radius: 8px; }
+    .card {
+      margin-top: 28px; padding: 22px 20px;
+      border: 1px solid var(--line); border-radius: 18px;
+      background: rgba(255, 250, 244, 0.92);
+      box-shadow: 0 18px 40px rgba(28, 20, 15, 0.06);
+    }
+    h1 {
+      font-family: Fraunces, Georgia, serif;
+      font-size: 1.65rem; font-weight: 500; margin: 0 0 8px; letter-spacing: -0.02em;
+    }
+    .lede { margin: 0 0 18px; color: var(--muted); font-size: 0.95rem; }
+    .meta {
+      font-size: 0.86rem; color: var(--muted);
+      padding: 10px 12px; border-radius: 12px;
+      background: rgba(14, 122, 104, 0.07); margin: 0 0 16px;
+    }
+    .meta strong { color: var(--ink); }
+    .field { margin: 0 0 12px; }
+    label { display: block; font-size: 0.82rem; font-weight: 650; margin-bottom: 4px; }
+    input {
+      width: 100%; padding: 10px 12px; border-radius: 10px;
+      border: 1px solid var(--line); font: inherit; background: #fff;
+    }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 0; border-radius: 999px; padding: 11px 18px;
+      font: inherit; font-weight: 700; cursor: pointer;
+      background: var(--teal); color: #fff;
+    }
+    .btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+    .msg { min-height: 1.2em; font-size: 0.88rem; margin: 10px 0 0; }
+    .msg.err { color: var(--err); }
+    .msg.ok { color: var(--teal); }
+    .hint { font-size: 0.82rem; color: var(--muted); margin: 8px 0 0; }
+    [hidden] { display: none !important; }
+    .warn {
+      border: 1px solid rgba(196, 71, 50, 0.35);
+      background: rgba(196, 71, 50, 0.08);
+      border-radius: 12px; padding: 10px 12px; font-size: 0.88rem; margin: 0 0 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="logo" href="/"><img src="/brand/bitpype-mark.svg" alt="" width="32" height="32" /> BitPype</a>
+    <div class="card">
+      <h1>Connect MCP</h1>
+      <p class="lede">Allow an AI agent to manage <em>your</em> website via the client portal MCP (pages, modules, theme, publish).</p>
+      <div class="meta" id="pending-meta">Loading authorization request…</div>
+      <div class="warn" id="plan-warn" hidden></div>
+
+      <div id="panel-login" hidden>
+        <form id="form-login">
+          <div class="field">
+            <label for="login-email">Portal email</label>
+            <input id="login-email" type="email" autocomplete="username" required />
+          </div>
+          <div class="field">
+            <label for="login-password">Password</label>
+            <input id="login-password" type="password" autocomplete="current-password" required />
+          </div>
+          <div id="captcha-login" class="field"></div>
+          <button class="btn" type="submit" id="btn-login">Sign in</button>
+          <p class="hint">No password? Open the <a href="/portal">client portal</a> and use Request access.</p>
+          <p class="msg" id="msg-login"></p>
+        </form>
+      </div>
+
+      <div id="panel-consent" hidden>
+        <p class="hint" id="who-line" style="margin-top:0"></p>
+        <div class="row">
+          <button type="button" class="btn" id="btn-allow">Allow</button>
+          <button type="button" class="btn ghost" id="btn-deny">Deny</button>
+        </div>
+        <p class="msg" id="msg-consent"></p>
+      </div>
+
+      <div id="panel-error" hidden>
+        <p class="msg err" id="msg-error"></p>
+        <p class="hint"><a href="/portal">Open client portal</a></p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/captcha.js"></script>
+  <script>
+    (function () {
+      const pendingMeta = document.getElementById('pending-meta');
+      const planWarn = document.getElementById('plan-warn');
+      const panelLogin = document.getElementById('panel-login');
+      const panelConsent = document.getElementById('panel-consent');
+      const panelError = document.getElementById('panel-error');
+      const msgLogin = document.getElementById('msg-login');
+      const msgConsent = document.getElementById('msg-consent');
+      const msgError = document.getElementById('msg-error');
+      const whoLine = document.getElementById('who-line');
+
+      let captchaLogin = { enabled: false, getToken: async () => '', reset: () => {} };
+      let state = { pending: null, client: null, planOk: false };
+
+      function show(el) { el.hidden = false; }
+      function hide(el) { el.hidden = true; }
+
+      async function api(url, opts) {
+        const res = await fetch(url, {
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...(opts && opts.headers) },
+          ...opts,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+          const err = new Error((data && (data.message || data.error)) || res.statusText || 'Request failed');
+          err.status = res.status;
+          err.code = data && data.code;
+          throw err;
+        }
+        return data;
+      }
+
+      function renderPending(p) {
+        if (!p) {
+          pendingMeta.textContent = 'No pending request.';
+          return;
+        }
+        const host = p.redirect_host || 'the app';
+        pendingMeta.innerHTML =
+          'App: <strong>' + esc(p.client_name || p.client_id) + '</strong><br />'
+          + 'Redirects to: <strong>' + esc(host) + '</strong><br />'
+          + 'Scope: <strong>' + esc(p.scope || 'mcp') + '</strong> (your site only)';
+      }
+
+      function esc(s) {
+        return String(s || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function paint() {
+        hide(panelLogin); hide(panelConsent); hide(panelError);
+        planWarn.hidden = true;
+        if (!state.pending) {
+          show(panelError);
+          msgError.textContent = 'This authorization link is missing or expired. Start again from Claude.';
+          return;
+        }
+        renderPending(state.pending);
+        if (!state.client) {
+          show(panelLogin);
+          return;
+        }
+        whoLine.textContent = 'Signed in as ' + (state.client.email || state.client.businessName || 'client')
+          + (state.client.businessName ? ' · ' + state.client.businessName : '');
+        if (!state.planOk) {
+          planWarn.hidden = false;
+          planWarn.textContent = state.planError || 'Standard or Premium is required to connect MCP.';
+        }
+        show(panelConsent);
+        document.getElementById('btn-allow').disabled = !state.planOk;
+      }
+
+      async function refresh() {
+        const data = await api('/oauth/pending');
+        state.pending = data.pending;
+        state.client = data.client;
+        state.planOk = !!data.planOk;
+        state.planError = data.planError || '';
+        paint();
+      }
+
+      document.getElementById('form-login').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        msgLogin.textContent = '';
+        msgLogin.className = 'msg';
+        const btn = document.getElementById('btn-login');
+        btn.disabled = true;
+        try {
+          const captchaToken = await captchaLogin.getToken();
+          await api('/api/v1/portal/login', {
+            method: 'POST',
+            body: JSON.stringify({
+              email: document.getElementById('login-email').value.trim(),
+              password: document.getElementById('login-password').value,
+              captchaToken,
+            }),
+          });
+          msgLogin.className = 'msg ok';
+          msgLogin.textContent = 'Signed in.';
+          await refresh();
+        } catch (err) {
+          msgLogin.className = 'msg err';
+          msgLogin.textContent = err.message || 'Sign-in failed';
+          try { captchaLogin.reset && captchaLogin.reset(); } catch { /* */ }
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      async function consent(approve) {
+        msgConsent.textContent = '';
+        msgConsent.className = 'msg';
+        document.getElementById('btn-allow').disabled = true;
+        document.getElementById('btn-deny').disabled = true;
+        try {
+          const data = await api('/oauth/consent', {
+            method: 'POST',
+            body: JSON.stringify({ approve: !!approve }),
+          });
+          if (data.redirect) {
+            window.location.href = data.redirect;
+            return;
+          }
+          throw new Error('No redirect returned');
+        } catch (err) {
+          msgConsent.className = 'msg err';
+          msgConsent.textContent = err.message || 'Could not complete authorization';
+          document.getElementById('btn-allow').disabled = !state.planOk;
+          document.getElementById('btn-deny').disabled = false;
+        }
+      }
+
+      document.getElementById('btn-allow').addEventListener('click', () => consent(true));
+      document.getElementById('btn-deny').addEventListener('click', () => consent(false));
+
+      (async function init() {
+        try {
+          if (window.ScoutCaptcha) {
+            captchaLogin = await window.ScoutCaptcha.mount(document.getElementById('captcha-login'));
+          }
+        } catch { /* captcha optional when disabled */ }
+        try {
+          await refresh();
+        } catch (err) {
+          show(panelError);
+          msgError.textContent = err.message || 'Could not load authorization request';
+        }
+      })();
+    })();
+  </script>
+</body>
+</html>

@@ -1,6 +1,8 @@
 'use strict';
 
 const platform = require('./platform');
+const { assertMailjetSenderActive } = require('../src/mailjetSender');
+const { renderBrandedEmail, ensureBrandedEmail } = require('../src/emailTemplate');
 
 async function platformSmtpSettings() {
   const keys = [
@@ -12,7 +14,13 @@ async function platformSmtpSettings() {
   return out;
 }
 
-async function sendPlatformMail({ to, subject, html, text }) {
+/**
+ * Send platform mail through the shared Bitpype HTML template.
+ * Prefer structured fields (title, paragraphs, cta) when composing new emails.
+ */
+async function sendPlatformMail({
+  to, subject, html, text, title, paragraphs, cta, preheader, footerNote,
+}) {
   const settings = await platformSmtpSettings();
   const { getProvider } = require('../src/email');
   const provider = getProvider(settings, null);
@@ -21,13 +29,56 @@ async function sendPlatformMail({ to, subject, html, text }) {
     e.code = 'SMTP_NOT_CONFIGURED';
     throw e;
   }
-  await provider.send({
+  await assertMailjetSenderActive(settings);
+
+  const payload = Array.isArray(paragraphs) && paragraphs.length
+    ? renderBrandedEmail({
+      title: title || subject,
+      paragraphs,
+      text: text || paragraphs.join('\n\n'),
+      cta,
+      preheader,
+      footerNote,
+    })
+    : ensureBrandedEmail({
+      subject,
+      title,
+      html: html || text || '',
+      text: text || undefined,
+      cta,
+      preheader,
+      footerNote,
+    });
+
+  const result = await provider.send({
     to,
     subject,
-    html: html || text || '',
-    text: text || undefined,
+    html: payload.html,
+    text: payload.text,
+    skipBrand: true,
   });
-  return { sent: true, provider: provider.name };
+  console.log(
+    '[mailer] sent',
+    JSON.stringify({
+      to,
+      subject,
+      provider: provider.name,
+      smtpResponse: result && result.response,
+      messageId: result && result.messageId,
+    })
+  );
+  return {
+    sent: true,
+    provider: provider.name,
+    smtpResponse: result && result.response,
+    messageId: result && result.messageId,
+  };
 }
 
-module.exports = { sendPlatformMail, platformSmtpSettings };
+module.exports = {
+  sendPlatformMail,
+  platformSmtpSettings,
+  assertMailjetSenderActive,
+  renderBrandedEmail,
+  ensureBrandedEmail,
+};

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Approve social posts</title>
+  <style>
+    :root { --bg: #f6f3ee; --ink: #1c1917; --muted: #78716c; --line: #e7e5e4; --ok: #166534; --err: #991b1b; --accent: #0f766e; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: linear-gradient(160deg, #f6f3ee, #e7e5e4 50%, #fafaf9); color: var(--ink); min-height: 100vh; }
+    main { max-width: 720px; margin: 0 auto; padding: 28px 18px 64px; }
+    h1 { font-size: 1.5rem; margin: 0 0 6px; }
+    .lede { color: var(--muted); margin: 0 0 20px; }
+    .card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 0 0 12px; }
+    .meta { font-size: 0.85rem; color: var(--muted); margin-bottom: 8px; }
+    .caption { white-space: pre-wrap; line-height: 1.45; }
+    .thumb { max-width: 100%; max-height: 220px; border-radius: 8px; margin-top: 10px; display: block; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+    button { border: 0; border-radius: 8px; padding: 10px 14px; font-weight: 600; cursor: pointer; }
+    .primary { background: var(--accent); color: #fff; }
+    .danger { background: #fecaca; color: var(--err); }
+    .ghost { background: #fff; border: 1px solid var(--line); }
+    .msg { margin-top: 14px; }
+    .msg.ok { color: var(--ok); }
+    .msg.err { color: var(--err); }
+    label.row { display: flex; gap: 10px; align-items: flex-start; }
+    input[type=checkbox] { margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Approve your posts</h1>
+    <p class="lede" id="lede">Loading…</p>
+    <div id="list"></div>
+    <div id="captcha" style="margin:14px 0"></div>
+    <div class="actions" id="actions" hidden>
+      <button type="button" class="primary" id="approve-all">Approve all</button>
+      <button type="button" class="ghost" id="approve-sel">Approve selected</button>
+      <button type="button" class="danger" id="reject">Reject all</button>
+    </div>
+    <p class="msg" id="msg"></p>
+  </main>
+  <script src="/js/captcha.js"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const token = params.get('token') || '';
+    const w = params.get('w') || '';
+    const list = document.getElementById('list');
+    const lede = document.getElementById('lede');
+    const msg = document.getElementById('msg');
+    const actions = document.getElementById('actions');
+    let captcha = { enabled: false, getToken: async () => '', reset: () => {} };
+
+    function esc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async function load() {
+      if (!token || !w) {
+        lede.textContent = 'This approval link is incomplete (missing token or workspace).';
+        return;
+      }
+      const res = await fetch(`/api/v1/social/approve/${encodeURIComponent(token)}?w=${encodeURIComponent(w)}`);
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error((data && data.error) || 'Failed to load');
+      const d = data.data;
+      const name = (d.lead && d.lead.business_name) || 'your business';
+      lede.textContent = `${name} · ${d.batch.week_start || ''} to ${d.batch.week_end || ''} · status: ${d.batch.status}`;
+      list.innerHTML = (d.posts || []).map((p) => `
+        <div class="card">
+          <label class="row">
+            <input type="checkbox" class="pick" value="${esc(p.id)}" checked />
+            <div>
+              <div class="meta">${esc((p.scheduled_at || '').replace('T', ' ').slice(0, 16))} UTC · ${(p.platforms || []).join(', ')} · ${p.with_image ? 'photo' : 'text only'} · ${esc(p.status)}</div>
+              <div class="caption">${esc(p.caption)}</div>
+              ${p.image_url ? `<img class="thumb" src="${esc(p.image_url)}" alt="" />` : ''}
+            </div>
+          </label>
+        </div>`).join('') || '<p class="lede">No posts in this batch.</p>';
+      actions.hidden = false;
+      try {
+        if (window.ScoutCaptcha) captcha = await window.ScoutCaptcha.mount(document.getElementById('captcha'));
+      } catch (err) { console.warn(err); }
+      if (['approved', 'rejected', 'partial'].includes(d.batch.status)) {
+        msg.className = 'msg ok';
+        msg.textContent = `Already decided (${d.batch.status}). You can still change selected posts.`;
+      }
+    }
+
+    async function decide(action) {
+      msg.className = 'msg';
+      msg.textContent = 'Saving…';
+      const postIds = [...document.querySelectorAll('.pick:checked')].map((el) => Number(el.value));
+      const captchaToken = await captcha.getToken();
+      const res = await fetch(`/api/v1/social/approve/${encodeURIComponent(token)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ w: Number(w), action, postIds, captchaToken }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error((data && data.error) || 'Failed');
+      msg.className = 'msg ok';
+      msg.textContent = action === 'reject' ? 'Rejected. Thanks for the feedback.' : 'Approved — posts are scheduled.';
+      try { captcha.reset && captcha.reset(); } catch { /* ignore */ }
+      await load();
+    }
+
+    document.getElementById('approve-all').onclick = () => decide('approve').catch((e) => {
+      msg.className = 'msg err'; msg.textContent = e.message;
+      try { captcha.reset && captcha.reset(); } catch { /* ignore */ }
+    });
+    document.getElementById('approve-sel').onclick = () => decide('approve_selected').catch((e) => {
+      msg.className = 'msg err'; msg.textContent = e.message;
+      try { captcha.reset && captcha.reset(); } catch { /* ignore */ }
+    });
+    document.getElementById('reject').onclick = () => {
+      if (!confirm('Reject all posts in this week?')) return;
+      decide('reject').catch((e) => {
+        msg.className = 'msg err'; msg.textContent = e.message;
+        try { captcha.reset && captcha.reset(); } catch { /* ignore */ }
+      });
+    };
+
+    load().catch((e) => { lede.textContent = e.message; });
+  </script>
+</body>
+</html>

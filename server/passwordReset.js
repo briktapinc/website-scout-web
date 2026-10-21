@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { query, driver } = require('./db');
 const { findUserByEmail } = require('./workspace');
-const { appUrl } = require('./stripeClient');
+const { staffUrl } = require('./appUrls');
 const { sendPlatformMail } = require('./mailer');
 
 function hashToken(token) {
@@ -29,30 +29,29 @@ async function requestReset(email) {
     { userId: user.id, tokenHash, expiresAt: expiresSql }
   );
 
-  const link = `${appUrl()}/#/reset/${raw}`;
-  let emailed = false;
-  let devLink;
+  const link = staffUrl(`reset/${encodeURIComponent(raw)}`);
   try {
     await sendPlatformMail({
       to: user.email,
-      subject: 'Reset your Website Scout password',
-      html: `<p>Reset your password:</p><p><a href="${link}">${link}</a></p><p>Expires in 1 hour.</p>`,
-      text: `Reset password: ${link}`,
+      subject: 'Reset your Bitpype password',
+      title: 'Reset your password',
+      paragraphs: [
+        'We received a request to reset your Bitpype password.',
+        'This link expires in 1 hour. If you did not ask for a reset, you can ignore this email.',
+      ],
+      cta: { url: link, label: 'Reset password' },
+      text: `Reset your Bitpype password.\n\nReset password: ${link}\n\nExpires in 1 hour.`,
     });
-    emailed = true;
   } catch (e) {
-    if (e.code === 'SMTP_NOT_CONFIGURED') {
-      // Only expose the link outside production when SMTP is not configured.
-      if (process.env.NODE_ENV !== 'production' || process.env.DEV_RETURN_RESET_LINK === '1') {
-        devLink = link;
-      } else {
-        console.warn('[passwordReset] SMTP not configured; reset link not returned in production');
-      }
+    // Never put reset links in the HTTP response body.
+    if (e.code === 'SMTP_NOT_CONFIGURED' && process.env.NODE_ENV !== 'production') {
+      console.warn('[passwordReset] SMTP not configured — reset link (dev console only):', link);
     } else {
       console.warn('[passwordReset] email:', e.message);
     }
   }
-  return { ok: true, emailed, ...(devLink ? { resetLink: devLink } : {}) };
+  // Uniform response — no emailed/resetLink fields (enumeration + credential leak).
+  return { ok: true };
 }
 
 async function confirmReset(rawToken, newPassword) {
@@ -80,6 +79,27 @@ async function confirmReset(rawToken, newPassword) {
       : 'UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = :id',
     { id: row.id }
   );
+  // Invalidate staff sessions for this user by parsing session JSON (never LIKE substrings).
+  try {
+    const uid = Number(row.user_id);
+    const candidates = await query(
+      `SELECT session_id, data FROM sessions WHERE data LIKE :pat`,
+      { pat: '%"userId"%' }
+    );
+    for (const sess of candidates || []) {
+      let parsed;
+      try {
+        parsed = JSON.parse(sess.data);
+      } catch {
+        continue;
+      }
+      if (Number(parsed && parsed.userId) === uid) {
+        await query('DELETE FROM sessions WHERE session_id = :sid', { sid: sess.session_id });
+      }
+    }
+  } catch (e) {
+    console.warn('[passwordReset] session wipe:', e.message);
+  }
   return { ok: true };
 }
 

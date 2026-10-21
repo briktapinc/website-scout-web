@@ -2,7 +2,7 @@
 
 const crypto = require('crypto');
 const { query, driver } = require('./db');
-const { appUrl } = require('./stripeClient');
+const { staffUrl } = require('./appUrls');
 const { sendPlatformMail } = require('./mailer');
 
 function hashToken(token) {
@@ -33,16 +33,19 @@ async function createInvite({ workspaceId, email, role, invitedBy }) {
     }
   );
 
-  const link = `${appUrl()}/#/invite/${raw}`;
+  const link = staffUrl(`invite/${encodeURIComponent(raw)}`);
   let emailed = false;
   try {
     await sendPlatformMail({
       to: cleanEmail,
-      subject: 'You are invited to Website Scout',
-      html: `<p>You have been invited to a Website Scout workspace.</p>
-             <p><a href="${link}">Accept invite</a></p>
-             <p>This link expires in 7 days.</p>`,
-      text: `Accept invite: ${link}`,
+      subject: 'You are invited to Bitpype',
+      title: 'Workspace invite',
+      paragraphs: [
+        'You have been invited to a Bitpype workspace.',
+        'This link expires in 7 days.',
+      ],
+      cta: { url: link, label: 'Accept invite' },
+      text: `You have been invited to a Bitpype workspace.\n\nAccept invite: ${link}\n\nThis link expires in 7 days.`,
     });
     emailed = true;
   } catch (e) {

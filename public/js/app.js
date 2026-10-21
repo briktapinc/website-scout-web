@@ -12,12 +12,13 @@ const autoEl = document.getElementById('shell-automation');
 const topTitle = document.getElementById('top-title');
 const toastHost = document.getElementById('toast-host');
 
-const ROUTES = ['dashboard', 'leads', 'websites', 'design', 'outreach', 'pipeline', 'jobs', 'mcp', 'settings', 'billing', 'admin'];
+const ROUTES = ['dashboard', 'leads', 'websites', 'domains', 'design', 'social', 'outreach', 'pipeline', 'jobs', 'mcp', 'settings', 'billing', 'admin'];
 const ROUTE_LABELS = {
-  dashboard: 'Dashboard', leads: 'Leads', websites: 'Websites', design: 'Design', outreach: 'Outreach',
+  dashboard: 'Dashboard', leads: 'Leads', websites: 'Websites', design: 'Design', social: 'Social', outreach: 'Outreach',
   pipeline: 'Pipeline', jobs: 'Jobs', mcp: 'MCP', settings: 'Settings', billing: 'Billing', admin: 'Admin',
 };
 let currentUserIsSuperAdmin = false;
+let currentUserId = null;
 let requireSubscription = false;
 let userSubscribed = true;
 let productAccess = true;
@@ -73,6 +74,7 @@ function parseJson(v, fallback) {
 }
 
 function toast(text, kind) {
+  if (String(text) === 'AUTH_REQUIRED') return;
   const el = document.createElement('div');
   el.className = 'toast' + (kind ? ' ' + kind : '');
   el.textContent = String(text);
@@ -148,13 +150,21 @@ function pager(host, { page, pages, total }, onPage) {
   };
 }
 
+function isAuthRequired(err) {
+  return !!(err && err.status === 401 && (
+    err.code === 'AUTH_REQUIRED'
+    || (err.data && err.data.error === 'AUTH_REQUIRED')
+    || err.message === 'AUTH_REQUIRED'
+  ));
+}
+
 async function safeRun(btn, fn) {
   const isBtn = btn && btn.tagName === 'BUTTON';
   if (isBtn) btn.disabled = true;
   try {
     return await fn();
   } catch (err) {
-    if (err && err.status === 401) { renderAuth(); return undefined; }
+    if (isAuthRequired(err)) { goToLogin(); return undefined; }
     toast(err && err.message ? err.message : String(err), 'err');
     return undefined;
   } finally {
@@ -242,41 +252,78 @@ function openDrawer({ title, html, actionsHtml }) {
 function mountLeadPicker(host, opts) {
   const o = opts || {};
   let current = null;
+  let lastRows = [];
   host.classList.add('lead-picker');
-  host.innerHTML = `<input type="search" class="lp-input" placeholder="${esc(o.placeholder || 'Search leads by name, or type a lead id…')}" autocomplete="off" />
+  host.innerHTML = `<input type="search" class="lp-input" placeholder="${esc(o.placeholder || 'Search by name, business, or email…')}" autocomplete="off" />
     <ul class="lead-picker-results hidden"></ul><div class="lead-picker-selected hidden"></div>`;
   const input = $('.lp-input', host);
   const ul = $('.lead-picker-results', host);
   const selBox = $('.lead-picker-selected', host);
 
+  function leadTitle(l) {
+    return (l && (l.business_name || l.name)) || 'Lead';
+  }
+  function leadMeta(l) {
+    if (!l) return '';
+    return [l.email, l.city, l.phone, l.category].filter(Boolean).join(' · ');
+  }
+  function normalizeLead(l) {
+    if (!l) return null;
+    return Object.assign({}, l, {
+      id: Number(l.id),
+      name: leadTitle(l),
+      business_name: l.business_name || l.name || null,
+      meta: leadMeta(l),
+    });
+  }
+
   function renderSelected() {
     if (!current) { selBox.classList.add('hidden'); input.classList.remove('hidden'); return; }
     selBox.classList.remove('hidden');
     input.classList.add('hidden');
-    selBox.innerHTML = `<span><b>${esc(current.name || 'Lead')}</b> <span class="hint">#${esc(current.id)}</span></span>
-      <button type="button" class="btn small clear">Change</button>`;
+    const meta = leadMeta(current) || current.meta || '';
+    selBox.innerHTML = `<span class="lp-selected-copy"><b>${esc(leadTitle(current))}</b> <span class="hint">#${esc(current.id)}</span>
+      ${meta ? `<div class="hint">${esc(meta)}</div>` : ''}</span>
+      <button type="button" class="btn small clear">Clear</button>`;
     $('.clear', selBox).onclick = () => { current = null; renderSelected(); if (o.onChange) o.onChange(null); };
   }
 
   const search = debounce(async () => {
     const q = input.value.trim();
-    if (!q) { ul.classList.add('hidden'); return; }
+    if (!q) { ul.classList.add('hidden'); lastRows = []; return; }
     try {
       const r = await api.leads({ q, pageSize: 8 });
       const rows = (r.data && r.data.leads) || [];
+      lastRows = rows;
       let html = '';
-      if (/^\d+$/.test(q)) html += `<li><button type="button" data-id="${esc(q)}" data-name="Lead #${esc(q)}">Use lead id <b>#${esc(q)}</b></button></li>`;
-      html += rows.map((l) => `<li><button type="button" data-id="${l.id}" data-name="${esc(l.business_name)}"><b>${esc(l.business_name)}</b> <span class="hint">#${l.id} · ${esc(l.city || l.category || '')}</span></button></li>`).join('');
+      if (/^\d+$/.test(q)) {
+        html += `<li><button type="button" data-id="${esc(q)}" data-fetch="1">Use lead id <b>#${esc(q)}</b></button></li>`;
+      }
+      html += rows.map((l) => {
+        const meta = leadMeta(l);
+        return `<li><button type="button" data-id="${l.id}"><b>${esc(l.business_name)}</b> <span class="hint">#${l.id}${meta ? ` · ${esc(meta)}` : ''}</span></button></li>`;
+      }).join('');
       ul.innerHTML = html || '<li class="empty">No matches</li>';
       ul.classList.remove('hidden');
     } catch (e) { toast(e.message, 'err'); }
   }, 250);
 
   input.addEventListener('input', search);
-  ul.addEventListener('click', (e) => {
+  ul.addEventListener('click', async (e) => {
     const b = e.target.closest('button[data-id]');
     if (!b) return;
-    current = { id: Number(b.dataset.id), name: b.dataset.name };
+    const id = Number(b.dataset.id);
+    if (!Number.isInteger(id) || id <= 0) return;
+    let next = lastRows.find((r) => Number(r.id) === id) || null;
+    if (!next || b.dataset.fetch === '1') {
+      try {
+        const r = await api.leadGet(id);
+        next = (r.data && r.data.lead) || r.data || next;
+      } catch (err) {
+        if (!next) { toast(err.message || 'Lead not found', 'err'); return; }
+      }
+    }
+    current = normalizeLead(next || { id, name: `Lead #${id}` });
     ul.classList.add('hidden');
     input.value = '';
     renderSelected();
@@ -284,25 +331,43 @@ function mountLeadPicker(host, opts) {
   });
   return {
     get: () => current,
-    set(lead) { current = lead || null; renderSelected(); },
-    clear() { current = null; renderSelected(); },
+    set(lead) { current = normalizeLead(lead); renderSelected(); },
+    clear() { current = null; renderSelected(); if (o.onChange) o.onChange(null); },
   };
 }
 
 /** Iframe preview with page select + desktop/mobile toggle. renderFn(slug) -> api envelope with data.html. */
-function mountPreview(host, renderFn) {
-  host.innerHTML = `<div class="inline">
-    <select class="pv-page" style="width:auto"><option value="">All pages</option></select>
-    <button type="button" class="btn small primary pv-desktop">Desktop</button>
-    <button type="button" class="btn small pv-mobile">Mobile</button>
-    <button type="button" class="btn small pv-refresh">Refresh</button>
-    <span class="msg pv-msg"></span></div>
-    <div class="preview-frame desktop"><iframe class="pv-frame" sandbox="" title="Site preview"></iframe></div>`;
+function mountPreview(host, renderFn, hooks) {
+  host.innerHTML = `<div class="preview-toolbar">
+    <select class="pv-page" aria-label="Preview page"><option value="">All pages</option></select>
+    <div class="pv-actions">
+      <div class="pv-device" role="group" aria-label="Preview size">
+        <button type="button" class="btn small primary pv-desktop">Desktop</button>
+        <button type="button" class="btn small pv-mobile">Mobile</button>
+      </div>
+      <button type="button" class="btn small pv-refresh">Refresh</button>
+      <span class="msg pv-msg"></span>
+    </div>
+  </div>
+  <div class="preview-frame desktop"><iframe class="pv-frame" sandbox="allow-scripts allow-forms" title="Site preview"></iframe></div>`;
   const sel = $('.pv-page', host);
   const frame = $('.pv-frame', host);
   const box = $('.preview-frame', host);
   const msg = $('.pv-msg', host);
   let populated = false;
+
+  function matchPageOption(slugOrFile) {
+    const want = String(slugOrFile || '').trim().replace(/^\//, '').replace(/\.html$/i, '');
+    if (!want || want === 'index' || want === 'home') {
+      const home = [...sel.options].find((o) => o.value && (o.value === '/' || o.value === 'home' || o.value === 'index'));
+      return home || null;
+    }
+    return [...sel.options].find((o) => {
+      if (!o.value) return false;
+      const v = String(o.value).replace(/^\//, '').replace(/\.html$/i, '');
+      return v === want || o.value === slugOrFile;
+    }) || null;
+  }
 
   async function load() {
     setMsg(msg, 'Rendering…');
@@ -329,20 +394,236 @@ function mountPreview(host, renderFn) {
     $('.pv-mobile', host).classList.add('primary');
     $('.pv-desktop', host).classList.remove('primary');
   };
+  // In-preview nav posts here when a relative link has no #anchor in the stacked doc.
+  const onPreviewNav = (ev) => {
+    if (!ev.data || ev.data.source !== 'ws-preview-nav') return;
+    if (ev.source !== frame.contentWindow || ev.origin !== 'null') return;
+    if (ev.data.external) return;
+    const opt = matchPageOption(ev.data.slug || ev.data.file || '');
+    if (!opt || opt.value === sel.value) return;
+    sel.value = opt.value;
+    load();
+  };
+  window.addEventListener('message', onPreviewNav);
+  const onPreviewMsg = (ev) => {
+    if (!frame.contentWindow || ev.source !== frame.contentWindow || ev.origin !== 'null') return;
+    if (!ev.data || ev.data.source !== 'ws-preview' || !['ready','element-select','element-font'].includes(ev.data.type)) return;
+    if (hooks && typeof hooks.onPreview === 'function') hooks.onPreview(ev.data);
+  };
+  window.addEventListener('message', onPreviewMsg);
   load();
-  return { reload: load };
+  return {
+    reload: load,
+    post(msg) {
+      if (frame.contentWindow) frame.contentWindow.postMessage(msg, '*');
+    },
+    destroy() {
+      window.removeEventListener('message', onPreviewNav);
+      window.removeEventListener('message', onPreviewMsg);
+    },
+  };
+}
+
+function mergePageInnerHtml(original, inner) {
+  const src = String(original || '');
+  const body = String(inner || '');
+  const split = src.match(/(<body\b[^>]*>)([\s\S]*)(<\/body\s*>)/i);
+  if (split) return src.replace(split[0], split[1] + body + split[3]);
+  return body;
+}
+
+/**
+ * Sitewide Google fonts plus a per-element font, shared by design and website screens.
+ * save(pages, theme) persists. preview is a mountPreview handle rendered with editable:true.
+ */
+function bindFontToolbar(prefix, preview, getPages, getTheme, save) {
+  const fonts = window.WsFonts;
+  if (!fonts) return;
+  if (!document.getElementById('ws-font-catalog')) {
+    const link = document.createElement('link');
+    link.id = 'ws-font-catalog';
+    link.rel = 'stylesheet';
+    link.href = fonts.catalogHref();
+    document.head.appendChild(link);
+  }
+  const theme = getTheme() || {};
+  fonts.fillSelect($('#' + prefix + '-font-body'), theme.font || '', { defaultLabel: 'System' });
+  fonts.fillSelect($('#' + prefix + '-font-heading'), theme.headingFont || '', { defaultLabel: 'Same as site font' });
+  const elementSel = $('#' + prefix + '-font-element');
+  fonts.fillSelect(elementSel, '', { defaultLabel: 'Site default' });
+  if (elementSel) elementSel.disabled = true;
+  const msg = $('#' + prefix + '-font-msg');
+  let styling = false;
+  let selectedId = '';
+
+
+
+  function applyLive() {
+    const picked = readFonts();
+    if (preview) preview.post({source:'ws-portal', type:'site-fonts', ...picked, fontHref:fonts.hrefFor([fonts.matchName(picked.font), fonts.matchName(picked.headingFont)].filter(Boolean))});
+  }
+
+  function readFonts() {
+    const body = $('#' + prefix + '-font-body');
+    const head = $('#' + prefix + '-font-heading');
+    let font = theme.font || fonts.SYSTEM;
+    let headingFont = theme.headingFont || '';
+    if (body && body.value && body.value !== '__custom__') font = fonts.stackFor(body.value);
+    else if (body && body.value === '') font = fonts.SYSTEM;
+    if (head && head.value && head.value !== '__custom__') headingFont = fonts.stackFor(head.value);
+    else if (head && head.value === '') headingFont = '';
+    return { font, headingFont };
+  }
+
+  async function persist(pages, nextTheme, okText) {
+    setMsg(msg, 'Saving fonts…');
+    try {
+      await save(pages, nextTheme);
+      Object.assign(theme, nextTheme);
+      setMsg(msg, okText || 'Fonts saved.', 'ok');
+      if (preview) preview.reload();
+    } catch (e) {
+      setMsg(msg, e.message || 'Could not save fonts', 'err');
+    }
+  }
+
+  const saveBtn = $('#' + prefix + '-font-save');
+  if (saveBtn) {
+    saveBtn.onclick = () => {
+      const picked = readFonts();
+      const next = Object.assign({}, getTheme() || {}, picked);
+      persist(getPages(), next, 'Site fonts saved.');
+    };
+  }
+  ['body', 'heading'].forEach((which) => {
+    const sel = $('#' + prefix + '-font-' + which);
+    if (sel) sel.addEventListener('change', () => applyLive());
+  });
+  const editBtn = $('#' + prefix + '-font-edit');
+  if (editBtn) {
+    editBtn.onclick = () => {
+      styling = !styling;
+      editBtn.classList.toggle('primary', styling);
+      editBtn.textContent = styling ? 'Done styling' : 'Style an element';
+      if (elementSel) elementSel.disabled = !styling || !selectedId;
+      if (preview) preview.post({ source: 'ws-portal', type: 'edit-mode', on: styling, fontsOnly: true });
+      setMsg(msg, styling ? 'Click text in the preview, then choose its font.' : '');
+    };
+  }
+  if (elementSel) {
+    elementSel.addEventListener('change', () => {
+      if (!preview) return;
+      const name = fonts.selectedName(elementSel);
+
+      preview.post({
+        source: 'ws-portal',
+        type: 'set-font',
+        fontHref: name ? fonts.hrefFor([name]) : '',
+        family: name ? fonts.stackFor(name) : '',
+        name: name || '',
+      });
+    });
+  }
+
+  return {
+    onPreview(data) {
+      if (!data) return;
+      if (data.type === 'ready') {
+        applyLive();
+        if (styling && preview) preview.post({ source: 'ws-portal', type: 'edit-mode', on: true, fontsOnly: true });
+      }
+      if (data.type === 'element-select') {
+        selectedId = String(data.id || '');
+        if (elementSel) {
+          elementSel.disabled = !styling || !selectedId;
+          elementSel.value = fonts.matchName(data.fontFamily || '') || '';
+        }
+      }
+      if (data.type === 'element-font') {
+        if (!styling || !selectedId || data.id !== selectedId || (data.html && (typeof data.html !== 'string' || data.html.length > 800000))) return;
+        const id = String(data.id || '');
+        const pages = getPages();
+        const nextTheme = Object.assign({}, getTheme() || {});
+        if (/^html:\d+:\d+$/.test(id) && data.html) {
+          const pi = Number(data.pageIndex) || 0;
+          const page = pages[pi];
+          if (!page || typeof page.html !== 'string') {
+            setMsg(msg, 'This page is not freeform HTML.', 'err');
+            return;
+          }
+          page.html = mergePageInnerHtml(page.html, data.html);
+          persist(pages, nextTheme, 'Element font saved.');
+          return;
+        }
+        if (/^\d+:\d+:/.test(id)) {
+          const map = Object.assign({}, nextTheme.elementFonts || {});
+          if (!data.font) delete map[id];
+          else map[id] = data.font;
+          nextTheme.elementFonts = map;
+          persist(pages, nextTheme, 'Element font saved.');
+        }
+      }
+    },
+  };
 }
 
 /* ------------------------------------------------------------------ */
 /* Auth + shell                                                        */
 /* ------------------------------------------------------------------ */
 
+const PUBLIC_ROUTES = new Set(['login', 'register', 'forgot', 'reset', 'invite']);
+let signedIn = false;
+
 function authHashMode() {
   const { route, param } = parseHash();
   if (route === 'reset' && param) return { mode: 'reset', token: param, inviteToken: '' };
   if (route === 'invite' && param) return { mode: 'login', token: '', inviteToken: param };
   if (route === 'forgot') return { mode: 'forgot', token: '', inviteToken: '' };
+  if (route === 'register') return { mode: 'register', token: '', inviteToken: '' };
   return { mode: 'login', token: '', inviteToken: '' };
+}
+
+function rememberReturnHash() {
+  const hash = window.location.hash || '';
+  const m = hash.match(/^#\/([a-z-]+)/);
+  if (!m || PUBLIC_ROUTES.has(m[1])) return;
+  try { sessionStorage.setItem('scout.returnHash', hash); } catch { /* ignore */ }
+}
+
+function consumeReturnHash() {
+  let hash = '';
+  try {
+    hash = sessionStorage.getItem('scout.returnHash') || '';
+    sessionStorage.removeItem('scout.returnHash');
+  } catch { /* ignore */ }
+  const m = hash.match(/^#\/([a-z-]+)/);
+  if (!m || PUBLIC_ROUTES.has(m[1]) || !ROUTES.includes(m[1])) return '#/dashboard';
+  return hash;
+}
+
+function goToLogin(opts) {
+  signedIn = false;
+  shell.classList.add('hidden');
+  const forget = !!(opts && opts.forgetReturn);
+  if (forget) {
+    try { sessionStorage.removeItem('scout.returnHash'); } catch { /* ignore */ }
+  }
+  const { route } = parseHash();
+  const onPublic = PUBLIC_ROUTES.has(route);
+  if (!onPublic && !forget) rememberReturnHash();
+  if (!onPublic && window.location.hash !== '#/login') {
+    history.replaceState(null, '', window.location.pathname + window.location.search + '#/login');
+  }
+  const modeNow = authHashMode().mode;
+  if (
+    authGate
+    && !authGate.classList.contains('hidden')
+    && document.getElementById('auth-form')
+    && authGate.dataset.mode === modeNow
+  ) {
+    return;
+  }
+  renderAuth();
 }
 
 function renderAuth(forcedMode) {
@@ -350,6 +631,7 @@ function renderAuth(forcedMode) {
   shell.classList.add('hidden');
   const hashMode = authHashMode();
   let mode = forcedMode || hashMode.mode;
+  authGate.dataset.mode = mode;
   const resetToken = hashMode.token;
   const inviteToken = hashMode.inviteToken || '';
 
@@ -359,7 +641,7 @@ function renderAuth(forcedMode) {
 
   authGate.innerHTML = `
     <div class="auth-card">
-      <div class="auth-brand"><span class="brand-mark" style="background:#171512;color:#f3ead8">WS</span><h1>Website Scout</h1></div>
+      <div class="auth-brand"><span class="brand-mark" style="background:#171512;color:#f3ead8">BP</span><h1>Bitpype</h1></div>
       <p class="sub">Local business desk — sign in to your workspace.</p>
       ${inviteNote}
       <div class="tabs" id="auth-tabs">
@@ -382,6 +664,7 @@ function renderAuth(forcedMode) {
         <div id="reset-extra" class="hidden">
           <div class="field"><label for="a-pass2">New password</label><input id="a-pass2" name="password2" type="password" minlength="8" autocomplete="new-password" /></div>
         </div>
+        <div id="auth-captcha" class="field" style="margin:12px 0"></div>
         <button class="btn primary" type="submit" id="auth-submit" style="width:100%">Continue</button>
         <div class="msg" id="auth-msg"></div>
       </form>
@@ -424,7 +707,7 @@ function renderAuth(forcedMode) {
     $$('[data-goto]', links).forEach((btn) => {
       btn.onclick = () => {
         mode = btn.dataset.goto;
-        if (mode === 'login') window.location.hash = '#/dashboard';
+        if (mode === 'login') window.location.hash = '#/login';
         else if (mode === 'forgot') window.location.hash = '#/forgot';
         paintMode();
       };
@@ -433,10 +716,22 @@ function renderAuth(forcedMode) {
 
   paintMode();
 
+  let authCaptcha = { enabled: false, getToken: async () => '', reset: () => {} };
+  (async () => {
+    try {
+      if (window.ScoutCaptcha) {
+        authCaptcha = await window.ScoutCaptcha.mount($('#auth-captcha', authGate));
+      }
+    } catch (err) {
+      console.warn('captcha mount failed', err);
+    }
+  })();
+
   $$('[data-tab]', authGate).forEach((btn) => {
     btn.addEventListener('click', () => {
       mode = btn.dataset.tab;
       paintMode();
+      try { authCaptcha.reset && authCaptcha.reset(); } catch { /* ignore */ }
     });
   });
 
@@ -446,19 +741,17 @@ function renderAuth(forcedMode) {
     const msg = $('#auth-msg', authGate);
     setMsg(msg, 'Working…');
     try {
+      body.captchaToken = await authCaptcha.getToken();
       if (mode === 'forgot') {
-        const r = await api.forgotPassword(body.email);
+        const r = await api.forgotPassword(body.email, body.captchaToken);
         const data = r.data || {};
-        if (data.resetLink) {
-          setMsg(msg, 'SMTP not configured — use this link: ' + data.resetLink, 'ok');
-        } else {
-          setMsg(msg, 'If that email exists, a reset link was sent.', 'ok');
-        }
+        setMsg(msg, 'If that email exists, a reset link was sent.', 'ok');
+        try { authCaptcha.reset && authCaptcha.reset(); } catch { /* ignore */ }
         return;
       }
       if (mode === 'reset') {
         if (body.password !== body.password2) throw new Error('Passwords do not match');
-        await api.resetPassword(resetToken, body.password);
+        await api.resetPassword(resetToken, body.password, body.captchaToken);
         setMsg(msg, 'Password updated. You can log in.', 'ok');
         mode = 'login';
         window.location.hash = '#/';
@@ -470,6 +763,7 @@ function renderAuth(forcedMode) {
         body.acceptTerms = true;
       }
       const res = mode === 'login' ? await api.login(body) : await api.register(body);
+      signedIn = true;
       api.setWorkspaceId(res.data.workspaceId);
       if (inviteToken) {
         try {
@@ -487,6 +781,7 @@ function renderAuth(forcedMode) {
       }
       await bootApp(res.data);
     } catch (err) {
+      try { authCaptcha.reset && authCaptcha.reset(); } catch { /* ignore */ }
       setMsg(msg, err.message, 'error');
     }
   });
@@ -501,9 +796,10 @@ function updateBillingBanner() {
       <a href="#/billing">Open Billing</a>`;
     return;
   }
+  // Core Free access always has productAccess; this banner is only for paid gates.
   if (requireSubscription && !productAccess && !currentUserIsSuperAdmin) {
     el.classList.remove('hidden');
-    el.innerHTML = `<strong>Subscription required.</strong> Subscribe to use Website Scout.
+    el.innerHTML = `<strong>Paid plan required for this feature.</strong> Upgrade to unlock Standard/Premium entitlements.
       <a href="#/billing">Go to Billing</a>`;
     return;
   }
@@ -539,9 +835,12 @@ async function setAutomation(paused) {
 }
 
 async function bootApp(meData) {
+  signedIn = true;
   authGate.classList.add('hidden');
+  authGate.dataset.mode = '';
   shell.classList.remove('hidden');
   currentUserIsSuperAdmin = !!(meData.isSuperAdmin || (meData.user && meData.user.isSuperAdmin));
+  currentUserId = meData.user && meData.user.id != null ? Number(meData.user.id) : null;
   requireSubscription = !!meData.requireSubscription;
   userSubscribed = meData.subscribed != null
     ? !!meData.subscribed
@@ -919,7 +1218,7 @@ function openImportModal() {
   openModal({
     title: 'Import leads from CSV',
     wide: true,
-    body: `<p class="hint">Header row required. Common columns: business_name, category, email, phone, website, address, city, state, tags, group.</p>
+    body: `<p class="hint">Header row required. Common columns: business_name, category, email, phone, website, address, city, state, tags, group. Also accepts GapScout CSV (project, business, profile_url, location, score, opportunity, signal_evidence, platform, …).</p>
       <div class="field"><input id="im-file" type="file" accept=".csv,text/csv,text/plain" style="padding:6px" /></div>
       <div class="field"><textarea id="im-text" class="mono" placeholder="business_name,category,email,city&#10;Acme Plumbing,Plumber,hi@acme.test,Springfield"></textarea></div>
       <div class="field"><label>Hunt group (optional)</label><input id="im-group" type="text" /></div>
@@ -1016,8 +1315,16 @@ async function openLeadDrawer(id) {
       </section>
       <section><h3>Website</h3>
         ${site
-    ? `<p><a href="#/websites/${site.id}">${esc(site.name)}</a> ${statusBadge(site.status)}</p>`
+    ? `<p><a href="#/websites/${site.id}">${esc(site.name)}</a> ${statusBadge(site.status)}</p>
+           <div class="inline" style="margin-top:8px">
+             <button class="btn small" data-act="postcard">Postcard / QR</button>
+           </div>
+           <div id="ld-claim-kit" class="hint" style="margin-top:8px"></div>`
     : `<p class="hint">No website yet.</p><button class="btn small" data-act="gen">Build template site</button>`}
+      </section>
+      <section><h3>Social (Facebook / Instagram)</h3>
+        <p class="hint">Generate a month of posts, weekly client approval, then schedule to Meta. Images optional.</p>
+        <a class="btn small" href="#/social?leadId=${esc(id)}">Open Social for this lead</a>
       </section>
       <section><h3>Facts &amp; provenance (${facts.length})</h3>
         ${facts.map((f) => `<div class="kv"><span class="k">${esc(f.fact_key)}</span><span>${esc(String(f.value).slice(0, 400))} <span class="badge claim-${esc(f.claim_class)}">${esc(f.claim_class)}</span></span>
@@ -1092,6 +1399,27 @@ async function openLeadDrawer(id) {
       await reload(); if (leadsReload) leadsReload();
     },
     pipeline: () => openIntentModal(id, reload),
+    postcard: async () => {
+      const box = $('#ld-claim-kit', dr.el);
+      if (box) box.innerHTML = '<span class="hint">Loading…</span>';
+      try {
+        const kit = (await api.leadClaimKit(id)).data || {};
+        if (box) {
+          box.innerHTML = `
+            ${kit.siteUrl ? `<div class="kv"><span class="k">Site</span><span><a href="${esc(kit.siteUrl)}" target="_blank" rel="noopener">${esc(kit.siteUrl)}</a></span></div>` : '<p class="hint">No site URL yet.</p>'}
+            ${kit.claimUrl ? `<div class="kv"><span class="k">Claim</span><span><a href="${esc(kit.claimUrl)}" target="_blank" rel="noopener">${esc(kit.claimUrl)}</a></span></div>` : ''}
+            <div class="inline" style="gap:12px;margin-top:8px;flex-wrap:wrap">
+              ${kit.siteQrDataUrl ? `<img src="${esc(kit.siteQrDataUrl)}" alt="Site QR" width="96" height="96" />` : ''}
+              ${kit.claimQrDataUrl ? `<img src="${esc(kit.claimQrDataUrl)}" alt="Claim QR" width="96" height="96" />` : ''}
+            </div>`;
+        }
+        await api.leadPostcard(id);
+        toast('Postcard downloaded', 'ok');
+      } catch (e) {
+        if (box) box.innerHTML = `<span class="error">${esc(e.message || String(e))}</span>`;
+        toast(e.message || 'Postcard failed', 'err');
+      }
+    },
     gen: async () => {
       toast('Building template site…');
       await api.generateSite({ leadId: id, force: true, fallback: true });
@@ -1172,8 +1500,8 @@ async function pageWebsites(param) {
       <select id="w-status"><option value="">All statuses</option>${optionList(['draft', 'qa_pending', 'approved', 'ready', 'published'], sitesState.status)}</select>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Name</th><th>Lead</th><th>Status</th><th>Origin</th><th>Updated</th></tr></thead>
-      <tbody id="w-body"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+      <thead><tr><th>Name</th><th>Lead</th><th>Status</th><th>Origin</th><th>Updated</th><th></th></tr></thead>
+      <tbody id="w-body"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
     </table></div>
     <div class="pagination" id="w-pager"></div>`;
 
@@ -1188,14 +1516,31 @@ async function pageWebsites(param) {
     body.innerHTML = sites.map((s) => `<tr>
       <td><button class="link-btn" data-act="open" data-id="${s.id}">${esc(s.name)}</button></td>
       <td>${esc(s.business_name || ('#' + s.lead_id))}</td>
-      <td>${statusBadge(s.status)}</td><td>${esc(s.origin || '—')}</td><td>${esc(fmtDate(s.updated_at))}</td></tr>`).join('')
-      || '<tr><td colspan="5" class="empty">No websites yet. Build one for a lead above.</td></tr>';
+      <td>${statusBadge(s.status)}</td><td>${esc(s.origin || '—')}</td><td>${esc(fmtDate(s.updated_at))}</td>
+      <td class="actions"><button type="button" class="btn small danger" data-act="delete" data-id="${s.id}" data-name="${esc(s.name)}">Delete</button></td></tr>`).join('')
+      || '<tr><td colspan="6" class="empty">No websites yet. Build one for a lead above.</td></tr>';
     pager($('#w-pager'), { page: d.page || 1, pages: d.pages || 1, total: d.total || sites.length }, (p) => { sitesState.page = p; load(); });
   }
   $('#w-status').addEventListener('change', (e) => { sitesState.status = e.target.value; sitesState.page = 1; load(); });
 
   delegate(view, {
     open: (t) => { window.location.hash = '#/websites/' + t.dataset.id; },
+    delete: async (t) => {
+      const id = Number(t.dataset.id);
+      const name = t.dataset.name || ('#' + id);
+      if (!window.confirm(
+        `Delete website "${name}"?\n\nThis permanently removes the site record and all of its files/code from storage (export folders, previews, images, screenshots). This cannot be undone.`
+      )) return;
+      try {
+        await api.websiteDelete(id);
+        toast(`Website #${id} deleted`, 'ok');
+        setMsg($('#w-msg'), `Deleted website #${id}.`, 'ok');
+        await load();
+      } catch (e) {
+        setMsg($('#w-msg'), e.message || 'Delete failed.', 'err');
+        toast(e.message || 'Delete failed', 'err');
+      }
+    },
     assign: async () => {
       const lead = picker.get();
       if (!lead) { setMsg($('#w-msg'), 'Select a lead first.', 'err'); return; }
@@ -1224,10 +1569,11 @@ async function pageWebsiteDetail(id) {
   const site = siteR.data.site || {};
   let manifest = null;
   try { manifest = (await api.websiteByLead(site.lead_id)).data.site; } catch { /* optional */ }
-  const pages = parseJson(site.pages, []);
+  let pages = parseJson(site.pages, []);
   const theme = parseJson(site.theme, {});
   const versions = verR ? asList(verR.data, ['versions', 'rows']) : [];
   const cf = cfR ? cfR.data : null;
+  let structPageIdx = 0;
 
   view.innerHTML = `
     <div class="page-head">
@@ -1240,28 +1586,84 @@ async function pageWebsiteDetail(id) {
       <div class="page-actions">
         <button class="btn" data-act="qa">Run QA</button>
         <button class="btn" data-act="export">Export</button>
+        <button class="btn" data-act="download-zip">Download ZIP</button>
+        <button class="btn" data-act="postcard">Postcard / QR</button>
         <button class="btn" data-act="url">Preview URL</button>
         <button class="btn" data-act="photos">Add photos</button>
+        <button class="btn" data-act="optimize">Optimize images</button>
         <button class="btn" data-act="regen">Regenerate</button>
         <button class="btn" data-act="assign">Assign design job</button>
         <button class="btn primary" data-act="publish">Publish to Cloudflare</button>
+        <button class="btn danger" data-act="delete">Delete</button>
       </div>
     </div>
-    <div class="detail-grid">
+    <div class="detail-grid website-detail">
       <div>
         <div class="card"><h3>Preview</h3><div id="wd-preview"></div></div>
+        <div class="card"><h3>Fonts</h3>
+          <div class="font-toolbar">
+            <p class="hint">Pick site fonts for a live preview update. Save to keep them, or style one element in the preview.</p>
+            <div class="font-toolbar-row">
+              <div class="field"><label class="lbl" for="wd-font-body">Site</label><select id="wd-font-body"></select></div>
+              <div class="field"><label class="lbl" for="wd-font-heading">Headings</label><select id="wd-font-heading"></select></div>
+              <button type="button" class="btn small" id="wd-font-save">Save site fonts</button>
+            </div>
+            <hr class="font-toolbar-divider" />
+            <div class="font-toolbar-row is-actions">
+              <button type="button" class="btn small" id="wd-font-edit">Style an element</button>
+              <div class="field"><label class="lbl" for="wd-font-element">This element</label><select id="wd-font-element" disabled></select></div>
+              <span class="msg" id="wd-font-msg"></span>
+            </div>
+          </div>
+        </div>
       </div>
       <div>
         <div class="card"><h3>Actions &amp; results</h3>
           <div id="wd-out" class="hint">Run QA, export, or publish to see results here.</div>
-          ${cf && !cf.configured ? '<p class="hint">Cloudflare is not configured. <a href="#/settings">Add credentials in Settings</a> to publish.</p>' : ''}
+          ${cf && !cf.configured ? '<p class="hint">Cloudflare is not configured. <a href="#/settings/cloudflare">Add credentials in Settings</a> to publish.</p>' : ''}
+        </div>
+        <div class="card"><h3>Postcard &amp; claim QR</h3>
+          <p class="hint">Printable 4×6 postcard with a site QR and a claim QR (Yes / No). Claim uses the same interest path as outreach links.</p>
+          <div id="wd-claim-kit" class="hint">Open Postcard / QR to load links.</div>
+        </div>
+        <div class="card"><h3>Preview screenshots</h3>
+          <p class="hint">Desktop/mobile captures of home + services for outreach. Email uses a JPEG ≤1200px; SMS/MMS uses a &lt;900KB JPEG. Each lead gets their own site’s shots via {{site_screenshot}}.</p>
+          <div id="wd-shots" class="hint">Loading…</div>
+          <div class="inline" style="margin-top:8px">
+            <button type="button" class="btn small" data-act="shots-regen">Regenerate screenshots</button>
+            <span class="msg" id="wd-shots-msg"></span>
+          </div>
         </div>
         <div class="card"><h3>Versions (${versions.length})</h3>
-          ${versions.map((v) => `<div class="kv"><span class="k">v${esc(v.version_no)}</span><span>${esc(v.note || '—')}</span><span class="sub-line">${esc(fmtDate(v.created_at))} · <button class="link-btn" data-act="restore" data-v="${v.id}">Restore</button></span></div>`).join('') || '<p class="hint">No versions saved yet.</p>'}
+          <div class="shell-log shell-log-lines" tabindex="0">
+            ${versions.map((v) => `<div class="shell-log-line">
+              <span class="shell-dim">v${esc(v.version_no)}</span><span class="shell-main">${esc(v.note || '—')}</span>
+              <span class="shell-meta">${esc(fmtDate(v.created_at))} · <button type="button" class="shell-link" data-act="restore" data-v="${v.id}">Restore</button></span>
+            </div>`).join('') || '<p class="shell-empty">No versions saved yet.</p>'}
+          </div>
         </div>
-        <div class="card"><h3>Pages (${pages.length})</h3>
-          ${pages.map((p) => kv(p.slug, `${p.title || ''} — ${(p.sections || []).length} sections`)).join('') || '<p class="hint">No pages.</p>'}
-          <div class="swatches">${['primary', 'secondary', 'bg', 'text'].filter((k) => theme[k]).map((k) => `<span class="swatch" title="${esc(k)} ${esc(theme[k])}" style="background:${esc(theme[k])}"></span>`).join('')}</div>
+        <div class="card" id="wd-structure-card"><h3>Menu &amp; sections</h3>
+          <p class="hint">Reorder (↑↓), nest submenu (→), or unnest (←). Home stays first; banner / hero / nav stay fixed.</p>
+          <div id="wd-structure"></div>
+          <span class="msg" id="wd-struct-msg"></span>
+          <div class="swatches" style="margin-top:10px">${['primary', 'secondary', 'bg', 'text'].filter((k) => theme[k]).map((k) => `<span class="swatch" title="${esc(k)} ${esc(theme[k])}" style="background:${esc(theme[k])}"></span>`).join('')}</div>
+        </div>
+        <div class="card"><h3>Logo</h3>
+          <p class="hint">Text brand name (default) or an uploaded image logo (transparent PNG, header-sized).</p>
+          <div class="inline" style="align-items:center;gap:12px;margin:8px 0">
+            <label><input type="radio" name="wd-logo-mode" value="text" ${theme.logoMode === 'image' && theme.logoUrl ? '' : 'checked'} /> Text</label>
+            <label><input type="radio" name="wd-logo-mode" value="image" ${theme.logoMode === 'image' && theme.logoUrl ? 'checked' : ''} /> Image</label>
+          </div>
+          <div id="wd-logo-preview" style="min-height:48px;margin:8px 0;display:flex;align-items:center">
+            ${theme.logoMode === 'image' && theme.logoUrl
+    ? `<img src="${esc(theme.logoUrl)}" alt="Logo" style="max-height:44px;max-width:200px;object-fit:contain;background:repeating-conic-gradient(#eee 0% 25%,#fff 0% 50%) 50%/12px 12px" />`
+    : `<strong>${esc(theme.brandName || site.name || 'Business')}</strong>`}
+          </div>
+          <div class="inline" style="margin-top:8px">
+            <button class="btn small" data-act="logo-upload" type="button">Upload logo</button>
+            <button class="btn small" data-act="logo-text" type="button">Use text logo</button>
+            <span class="msg" id="wd-logo-msg"></span>
+          </div>
         </div>
         <div class="card"><h3>Edit JSON</h3>
           <p class="hint">Advanced: edit pages + theme directly. Saving creates a new version.</p>
@@ -1272,10 +1674,197 @@ async function pageWebsiteDetail(id) {
       </div>
     </div>`;
 
-  const preview = mountPreview($('#wd-preview'), (slug) => api.websiteRender(id, { editable: false, pageSlug: slug }));
+  let fontHooks = null;
+  const preview = mountPreview($('#wd-preview'), (slug) => api.websiteRender(id, { editable: true, pageSlug: slug }), {
+    onPreview: (data) => { if (fontHooks) fontHooks.onPreview(data); },
+  });
+  fontHooks = bindFontToolbar('wd', preview, () => pages, () => theme, (nextPages, nextTheme) =>
+    api.websiteSave(id, { pages: nextPages, theme: nextTheme, note: 'Site fonts' }));
   const out = $('#wd-out');
+  const PINNED_SEC = new Set(['nav', 'hero', 'banner']);
+  function isHomeLikeAdmin(p, list) {
+    const slug = String((p && p.slug) || '').toLowerCase().replace(/\.html$/i, '');
+    if (slug === '' || slug === '/' || slug === 'home' || slug === 'index') return true;
+    return Array.isArray(list) && list[0] === p;
+  }
+  function sectionLabelAdmin(s, i) {
+    const t = String((s && s.type) || 'block');
+    const c = (s && s.content) || {};
+    const title = c.title || c.heading || c.label || '';
+    return title ? `${t}: ${String(title).slice(0, 40)}` : `${t} #${i + 1}`;
+  }
+  let structMenu = null;
+  async function loadWdStructureSummary() {
+    try {
+      const r = await api.websiteStructure(id);
+      const data = r && r.data ? r.data : r;
+      structMenu = (data && data.menu) || null;
+    } catch {
+      structMenu = null;
+    }
+  }
+  function renderWdStructure() {
+    const host = $('#wd-structure');
+    if (!host) return;
+    if (!pages.length) {
+      host.innerHTML = '<p class="hint">No pages.</p>';
+      return;
+    }
+    if (structPageIdx >= pages.length) structPageIdx = Math.max(0, pages.length - 1);
+    const menuItems = Array.isArray(structMenu) && structMenu.length
+      ? structMenu
+      : pages.map((p, i) => ({
+        index: i,
+        depth: (p.menuParent || p.menu_parent) ? 1 : 0,
+        slug: p.slug,
+        title: p.title || p.slug,
+        pinned: isHomeLikeAdmin(p, pages) && i === 0,
+        canUp: i > 0 && !(isHomeLikeAdmin(pages[i - 1], pages) && (i - 1) === 0),
+        canDown: i < pages.length - 1 && !isHomeLikeAdmin(p, pages),
+        canNest: i > 0 && !(p.menuParent || p.menu_parent) && !isHomeLikeAdmin(p, pages),
+        canUnnest: !!(p.menuParent || p.menu_parent),
+      }));
+    const menuHtml = menuItems.map((item) => {
+      const pinned = !!item.pinned;
+      const depth = Number(item.depth) === 1 ? 1 : 0;
+      const from = item.index != null ? item.index : 0;
+      const canUp = !!item.canUp;
+      const canDown = !!item.canDown;
+      const canNest = !!item.canNest;
+      const canUnnest = !!item.canUnnest;
+      return `<div class="struct-row${pinned ? ' pinned' : ''}${depth === 1 ? ' depth-1' : ''}">
+        <span class="struct-label"><strong>${esc(item.title || item.slug)}</strong> <span class="mono hint">${esc(item.slug || '')}${depth === 1 ? ' · sub' : ''}</span></span>
+        <button type="button" class="btn small" data-act="menu-unnest" data-i="${from}" ${canUnnest ? '' : 'disabled'} title="Unnest">←</button>
+        <button type="button" class="btn small" data-act="menu-nest" data-i="${from}" ${canNest ? '' : 'disabled'} title="Nest">→</button>
+        <button type="button" class="btn small" data-act="menu-up" data-i="${from}" ${canUp ? '' : 'disabled'}>↑</button>
+        <button type="button" class="btn small" data-act="menu-down" data-i="${from}" ${canDown ? '' : 'disabled'}>↓</button>
+      </div>`;
+    }).join('');
+    const tabsHtml = pages.map((p, i) =>
+      `<button type="button" class="btn small${i === structPageIdx ? ' primary' : ''}" data-act="struct-page" data-i="${i}">${esc(p.title || p.slug)}</button>`
+    ).join(' ');
+    const page = pages[structPageIdx];
+    const secs = (page && page.sections) || [];
+    const freeform = page && typeof page.html === 'string' && page.html.trim();
+    let secsHtml;
+    if (freeform && !secs.length) {
+      secsHtml = '<p class="hint">Freeform HTML page — reorder via Menu above.</p>';
+    } else {
+      secsHtml = secs.map((s, i) => {
+        const pinned = PINNED_SEC.has(String(s.type || '').toLowerCase());
+        let canUp = !pinned && i > 0 && !PINNED_SEC.has(String(secs[i - 1].type || '').toLowerCase());
+        let canDown = !pinned && i < secs.length - 1 && !PINNED_SEC.has(String(secs[i + 1].type || '').toLowerCase());
+        return `<div class="struct-row${pinned ? ' pinned' : ''}">
+          <span class="struct-label">${esc(sectionLabelAdmin(s, i))}${pinned ? ' <span class="hint">fixed</span>' : ''}</span>
+          <button type="button" class="btn small" data-act="sec-up" data-i="${i}" ${canUp ? '' : 'disabled'}>↑</button>
+          <button type="button" class="btn small" data-act="sec-down" data-i="${i}" ${canDown ? '' : 'disabled'}>↓</button>
+        </div>`;
+      }).join('') || '<p class="hint">No sections.</p>';
+    }
+    host.innerHTML = `<h4 style="margin:8px 0 6px;font-size:13px">Menu</h4>${menuHtml}
+      <h4 style="margin:14px 0 6px;font-size:13px">Sections</h4>
+      <div class="inline" style="flex-wrap:wrap;gap:4px;margin-bottom:8px">${tabsHtml}</div>
+      ${secsHtml}`;
+  }
+  loadWdStructureSummary().then(() => renderWdStructure());
+  renderWdStructure();
+
+  async function loadWdShots() {
+    const host = $('#wd-shots');
+    if (!host) return;
+    try {
+      const r = await api.websiteScreenshots(id, { ready: '1' });
+      const shots = (r.data && r.data.screenshots) || [];
+      const captures = shots.filter((s) => s.kind === 'capture' || !s.kind);
+      const renditions = shots.filter((s) => s.kind === 'email' || s.kind === 'mms');
+      if (!shots.length) {
+        host.innerHTML = '<p class="hint">No screenshots yet. Publish a preview, then Regenerate.</p>';
+        return;
+      }
+      const thumb = (s) => `<div class="shot-card" style="border:1px solid var(--border);border-radius:10px;padding:8px;min-width:140px;max-width:180px">
+        <a href="${esc(s.publicUrl)}" target="_blank" rel="noopener"><img src="${esc(s.publicUrl)}" alt="" style="width:100%;height:90px;object-fit:cover;border-radius:6px;background:#eee" /></a>
+        <div class="hint" style="margin-top:6px">${esc(s.page)} · ${esc(s.viewport)}${s.kind && s.kind !== 'capture' ? ' · ' + esc(s.kind) : ''}</div>
+        <div class="hint">${esc(fmtDate(s.capturedAt))}${s.ready === false ? ' · <span class="error">not ready</span>' : ''}</div>
+        <div class="inline" style="margin-top:4px;gap:4px">
+          <button type="button" class="btn small" data-act="shot-copy" data-url="${esc(s.publicUrl)}">Copy URL</button>
+          <a class="btn small" href="${esc(s.publicUrl)}" target="_blank" rel="noopener">View</a>
+        </div>
+      </div>`;
+      host.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:10px">${captures.map(thumb).join('')}</div>
+        ${renditions.length ? `<p class="hint" style="margin-top:10px">Campaign renditions</p><div style="display:flex;flex-wrap:wrap;gap:10px">${renditions.map(thumb).join('')}</div>` : ''}`;
+    } catch (e) {
+      host.innerHTML = `<span class="error">${esc(e.message || 'Could not load screenshots')}</span>`;
+    }
+  }
+  loadWdShots();
+
+  async function wdReorder(scope, fromIndex, direction, action) {
+    const msg = $('#wd-struct-msg');
+    const act = String(action || 'move').toLowerCase();
+    const nesting = act === 'nest' || act === 'unnest';
+    setMsg(msg, nesting ? (act === 'nest' ? 'Nesting…' : 'Unnesting…') : 'Saving order…', '');
+    try {
+      const body = {
+        scope,
+        fromIndex,
+        action: nesting ? act : 'move',
+        pageIndex: structPageIdx,
+      };
+      if (!nesting) body.direction = direction;
+      const r = await api.websiteReorderStructure(id, body);
+      if (r && r.data && Array.isArray(r.data.pages)) pages = r.data.pages;
+      else {
+        const refreshed = await api.websiteGet(id);
+        pages = parseJson((refreshed.data.site || {}).pages, pages);
+      }
+      if (r && r.data && Array.isArray(r.data.menu)) structMenu = r.data.menu;
+      else await loadWdStructureSummary();
+      renderWdStructure();
+      const jsonEl = $('#wd-json');
+      if (jsonEl) {
+        try {
+          const cur = JSON.parse(jsonEl.value);
+          jsonEl.value = JSON.stringify({ pages, theme: cur.theme != null ? cur.theme : theme }, null, 2);
+        } catch {
+          jsonEl.value = JSON.stringify({ pages, theme }, null, 2);
+        }
+      }
+      setMsg(msg, 'Order saved', 'ok');
+      preview.reload();
+    } catch (e) {
+      setMsg(msg, e.message || 'Reorder failed', 'err');
+    }
+  }
 
   delegate(view, {
+    'menu-up': async (t) => { await wdReorder('menu', Number(t.dataset.i), -1, 'move'); },
+    'menu-down': async (t) => { await wdReorder('menu', Number(t.dataset.i), 1, 'move'); },
+    'menu-nest': async (t) => { await wdReorder('menu', Number(t.dataset.i), 0, 'nest'); },
+    'menu-unnest': async (t) => { await wdReorder('menu', Number(t.dataset.i), 0, 'unnest'); },
+    'sec-up': async (t) => { await wdReorder('sections', Number(t.dataset.i), -1, 'move'); },
+    'sec-down': async (t) => { await wdReorder('sections', Number(t.dataset.i), 1, 'move'); },
+    'struct-page': (t) => { structPageIdx = Number(t.dataset.i) || 0; renderWdStructure(); },
+    'shots-regen': async () => {
+      const msg = $('#wd-shots-msg');
+      setMsg(msg, 'Capturing (this can take a minute)…', '');
+      try {
+        await api.websiteScreenshotsCapture(id, { forcePreview: true });
+        setMsg(msg, 'Screenshots updated', 'ok');
+        await loadWdShots();
+      } catch (e) {
+        setMsg(msg, e.message || 'Capture failed', 'err');
+      }
+    },
+    'shot-copy': async (t) => {
+      const url = t.dataset.url;
+      if (!url) return;
+      try {
+        await navigator.clipboard.writeText(url);
+        toast('URL copied', 'ok');
+      } catch {
+        toast(url, 'ok');
+      }
+    },
     qa: async () => {
       out.innerHTML = '<span class="hint">Running QA…</span>';
       const r = (await api.websiteQa(id)).data;
@@ -1288,16 +1877,72 @@ async function pageWebsiteDetail(id) {
       const r = (await api.websiteExport(id)).data;
       out.innerHTML = `Exported on the server to: <span class="mono">${esc(r.path)}</span>`;
     },
+    'download-zip': async () => {
+      out.textContent = 'Building ZIP…';
+      try {
+        const r = await api.websiteExportZip(id);
+        out.innerHTML = `Downloaded <span class="mono">${esc(r.filename)}</span>${r.bytes != null ? ` (${esc(String(r.bytes))} bytes)` : ''}.`;
+      } catch (e) {
+        out.innerHTML = `<span class="error">ZIP failed: ${esc(e.message || String(e))}</span>`;
+      }
+    },
+    postcard: async () => {
+      const box = $('#wd-claim-kit');
+      out.textContent = 'Building postcard…';
+      if (box) box.innerHTML = '<span class="hint">Loading claim kit…</span>';
+      try {
+        const kit = (await api.websiteClaimKit(id)).data || {};
+        if (box) {
+          box.innerHTML = `
+            <div class="row" style="gap:16px;align-items:flex-start;flex-wrap:wrap">
+              <div style="flex:1;min-width:160px">
+                <div class="hint">View your site</div>
+                ${kit.siteUrl ? `<a href="${esc(kit.siteUrl)}" target="_blank" rel="noopener" class="mono" style="word-break:break-all;font-size:0.85rem">${esc(kit.siteUrl)}</a>` : '<span class="hint">No preview URL yet — use Preview URL / Publish first.</span>'}
+                ${kit.siteQrDataUrl ? `<div style="margin-top:8px"><img src="${esc(kit.siteQrDataUrl)}" alt="Site QR" width="120" height="120" style="image-rendering:pixelated" /></div>` : ''}
+              </div>
+              <div style="flex:1;min-width:160px">
+                <div class="hint">Scan to claim (Yes / No)</div>
+                ${kit.claimUrl ? `<a href="${esc(kit.claimUrl)}" target="_blank" rel="noopener" class="mono" style="word-break:break-all;font-size:0.85rem">${esc(kit.claimUrl)}</a>` : '<span class="error">Claim URL unavailable</span>'}
+                ${kit.claimQrDataUrl ? `<div style="margin-top:8px"><img src="${esc(kit.claimQrDataUrl)}" alt="Claim QR" width="120" height="120" style="image-rendering:pixelated" /></div>` : ''}
+              </div>
+            </div>`;
+        }
+        const r = await api.websitePostcard(id);
+        out.innerHTML = `Downloaded postcard <span class="mono">${esc(r.filename)}</span>${r.bytes != null ? ` (${esc(String(r.bytes))} bytes)` : ''}.`;
+        toast('Postcard downloaded', 'ok');
+      } catch (e) {
+        out.innerHTML = `<span class="error">Postcard failed: ${esc(e.message || String(e))}</span>`;
+        if (box && !box.querySelector('img')) {
+          box.innerHTML = `<span class="error">${esc(e.message || String(e))}</span>`;
+        }
+      }
+    },
     url: async () => {
-      out.textContent = 'Building preview…';
-      const r = (await api.websitePreview(id, false)).data;
-      out.innerHTML = `Server preview: <span class="mono">${esc(r.url || r.path)}</span><div class="hint">This URL is served from the server's loopback. Use the inline preview on the left for remote access.</div>`;
+      out.textContent = 'Publishing preview…';
+      const r = (await api.websitePreview(id, false, { force: true })).data;
+      const link = r.url
+        ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url)}</a>`
+        : esc(r.path || '');
+      out.innerHTML = `Public preview: ${link}${r.via ? `<div class="hint">via ${esc(r.via)}${r.project ? ` · project ${esc(r.project)}` : ''}</div>` : ''}`;
     },
     photos: async () => {
       out.textContent = 'Pulling photos…';
       const r = (await api.websiteImages(id, {})).data;
       out.textContent = `Added ${r.count} photo(s) for “${r.query}”.`;
       preview.reload();
+    },
+    optimize: async () => {
+      out.textContent = 'Optimizing images (resize/compress; may take a minute)…';
+      try {
+        const r = (await api.websiteOptimizeImages(id, {})).data || {};
+        const n = r.changed != null ? r.changed : (r.optimized != null ? r.optimized : r.count);
+        const saved = r.savedBytes != null ? r.savedBytes : (r.bytesSaved != null ? r.bytesSaved : r.saved_bytes);
+        out.innerHTML = `Image optimize finished${n != null ? `: <strong>${esc(String(n))}</strong> file(s) changed` : ''}${saved != null ? ` · saved ${esc(String(saved))} bytes` : ''}.`
+          + (r.pagesUpdated != null ? `<div class="hint">Pages updated: ${esc(String(r.pagesUpdated))}</div>` : '');
+        preview.reload();
+      } catch (e) {
+        out.innerHTML = `<span class="error">${esc(e.message || 'Optimize failed')}</span>`;
+      }
     },
     regen: async () => {
       if (!window.confirm('Rebuild this site with fresh AI marketing copy? Layout resets to the template.')) return;
@@ -1318,6 +1963,20 @@ async function pageWebsiteDetail(id) {
       }
       out.innerHTML = `Published${r.url ? `: <a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url)}</a>` : ''}${r.project ? `<div class="hint">Project ${esc(r.project)}</div>` : ''}`;
     },
+    delete: async () => {
+      const name = site.name || ('#' + id);
+      if (!window.confirm(
+        `Delete website "${name}"?\n\nThis permanently removes the site record and all of its files/code from storage (export folders, previews, images, screenshots). This cannot be undone.`
+      )) return;
+      out.textContent = 'Deleting…';
+      try {
+        await api.websiteDelete(id);
+        toast(`Website #${id} deleted`, 'ok');
+        window.location.hash = '#/websites';
+      } catch (e) {
+        out.innerHTML = `<span class="error">${esc(e.message || 'Delete failed')}</span>`;
+      }
+    },
     restore: async (t) => {
       if (!window.confirm('Restore this version? The current state is saved as a new version first.')) return;
       await api.websiteRestore(Number(t.dataset.v));
@@ -1331,6 +1990,43 @@ async function pageWebsiteDetail(id) {
       const r = await api.websiteSave(id, { pages: parsed.pages, theme: parsed.theme, note: 'Manual edit from web UI' });
       setMsg(msg, `Saved as version ${r.data.version.version_no}`, 'ok');
       preview.reload();
+    },
+    'logo-text': async () => {
+      const msg = $('#wd-logo-msg');
+      setMsg(msg, 'Switching to text logo…', '');
+      try {
+        await api.websiteLogo(id, { mode: 'text' });
+        toast('Using text logo', 'ok');
+        pageWebsiteDetail(id);
+      } catch (e) {
+        setMsg(msg, e.message || 'Failed', 'err');
+      }
+    },
+    'logo-upload': async () => {
+      const msg = $('#wd-logo-msg');
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/jpeg,image/png,image/webp,image/gif';
+      input.onchange = async () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        setMsg(msg, 'Uploading logo…', '');
+        try {
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(new Error('Could not read file'));
+            reader.readAsDataURL(file);
+          });
+          const b64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+          await api.websiteLogo(id, { mode: 'image', data: b64, mimeType: file.type });
+          toast('Logo uploaded', 'ok');
+          pageWebsiteDetail(id);
+        } catch (e) {
+          setMsg(msg, e.message || 'Upload failed', 'err');
+        }
+      };
+      input.click();
     },
   });
 }
@@ -1351,6 +2047,66 @@ function erRowHtml(r, withJob) {
       <button class="btn small" data-act="er-use" data-id="${r.id}">Use as instructions</button>
       <button class="btn small danger" data-act="er-dismiss" data-id="${r.id}">Dismiss</button>` : ''}
     </div></div>`;
+}
+
+/** Pull change-request body from merged job.instructions (headers written by requestAgentChange / client form). */
+function extractQueuedChangeText(instructions, kind) {
+  const text = String(instructions || '');
+  if (!text.trim()) return '';
+  const headers = kind === 'improvements'
+    ? ['=== IMPROVEMENTS REQUEST ===', '=== CLIENT CHANGE REQUEST ===']
+    : ['=== REDESIGN REQUEST ===', '=== CLIENT CHANGE REQUEST ==='];
+  for (const header of headers) {
+    const start = text.indexOf(header);
+    if (start < 0) continue;
+    let body = text.slice(start + header.length).replace(/^\s*\n/, '');
+    const next = body.search(/\n=== [A-Z]/);
+    if (next >= 0) body = body.slice(0, next);
+    // Strip trailing scope notes appended by the queue helpers.
+    body = body
+      .replace(/\n\(Visual review used[\s\S]*$/i, '')
+      .replace(/\nScope:[\s\S]*$/i, '')
+      .trim();
+    if (body) return body.slice(0, 6000);
+  }
+  return '';
+}
+
+/**
+ * Resolve text for the redesign / improvement instruction boxes.
+ * Prefer: pending inbound email → queued job instructions → latest review suggestions.
+ */
+function resolveChangeBoxText(job, kind) {
+  const review = job && job.review;
+  const reviewText = kind === 'improvements'
+    ? String((review && review.improvement_instructions) || '').trim()
+    : String((review && review.redesign_instructions) || '').trim();
+
+  const pending = (job && Array.isArray(job.email_redesigns) ? job.email_redesigns : [])
+    .filter((r) => r && (r.request_kind === kind || (!r.request_kind && kind === 'redesign'))
+      && r.status !== 'submitted' && r.status !== 'dismissed');
+  if (pending.length) {
+    const latest = pending[0];
+    const body = String(latest.body || latest.body_excerpt || '').trim();
+    if (body) return body.slice(0, 6000);
+  }
+
+  const queued = extractQueuedChangeText(job && job.instructions, kind);
+  if (queued && (!job.request_kind || job.request_kind === kind)) return queued;
+
+  // After a client/operator queue, review.*_instructions may hold the same text.
+  return reviewText.slice(0, 6000);
+}
+
+function fillChangeInstructionBoxes(job, reviewOverride) {
+  const review = reviewOverride || (job && job.review) || null;
+  const viewJob = review && review !== (job && job.review)
+    ? Object.assign({}, job || {}, { review })
+    : job;
+  const redesignEl = $('#dd-redesign');
+  const improveEl = $('#dd-improve');
+  if (redesignEl) redesignEl.value = resolveChangeBoxText(viewJob, 'redesign');
+  if (improveEl) improveEl.value = resolveChangeBoxText(viewJob, 'improvements');
 }
 
 /** Design learning panel (status, playbook, distill/clear). Used on Design + Settings. */
@@ -1397,6 +2153,223 @@ async function mountLearning(host) {
     });
   };
   await load();
+}
+
+async function pageDomains() {
+  const [cfRes, linkedRes, sitesRes, leadsRes] = await Promise.all([
+    api.cfGet().catch(() => null),
+    api.domainsList().catch(() => null),
+    api.websites({ pageSize: 100 }).catch(() => null),
+    api.leads({ pageSize: 200 }).catch(() => null),
+  ]);
+  const cf = (cfRes && cfRes.data) || {};
+  const linked = asList((linkedRes && linkedRes.data) || {}, ['domains', 'rows']);
+  const sites = asList((sitesRes && sitesRes.data) || {}, ['websites', 'sites', 'rows']);
+  const leads = asList((leadsRes && leadsRes.data) || {}, ['leads', 'rows']);
+  const siteOpts = sites.map((s) =>
+    `<option value="${esc(s.id)}">#${esc(s.id)} · ${esc(s.name || 'Site')}${s.lead_id ? ` · lead ${esc(s.lead_id)}` : ''}</option>`
+  ).join('');
+  const leadOpts = leads.map((l) => {
+    const name = l.business_name || l.name || ('Lead #' + l.id);
+    const city = l.city ? ` · ${l.city}` : '';
+    return `<option value="${esc(l.id)}">${esc(name)}${esc(city)}</option>`;
+  }).join('');
+
+  view.innerHTML = `
+    <div class="page-head">
+      <div>
+        <h1>Domains</h1>
+        <p class="lede">Search and buy domains via Cloudflare Registrar, then link them to a published site (Pages custom domain). Purchase bills your Cloudflare payment method.</p>
+      </div>
+    </div>
+    ${!cf.configured ? `<div class="card"><p class="error">Cloudflare is not configured. <a href="#/settings/cloudflare">Add token + Account ID in Settings</a> (permissions: Account · Registrar · Edit, Account · Cloudflare Pages · Edit).</p></div>` : ''}
+    <div class="card">
+      <h3>Search domains</h3>
+      <form id="dom-search-form" class="row end">
+        <div class="field" style="flex:2;min-width:200px"><label>Keyword or name</label>
+          <input name="q" required placeholder="acme plumbing" autocomplete="off" /></div>
+        <div class="field" style="flex:1;min-width:180px"><label>Lead (optional)</label>
+          <select name="leadId"><option value="">None</option>${leadOpts}</select></div>
+        <div class="field" style="flex:0 0 auto"><label>&nbsp;</label>
+          <button class="btn primary" type="submit">Search</button></div>
+      </form>
+      <span class="msg" id="dom-search-msg"></span>
+      <div id="dom-search-results" style="margin-top:12px"></div>
+    </div>
+    <div class="card">
+      <h3>Link a domain to a site</h3>
+      <p class="hint">Use a domain you just bought, or one already on this Cloudflare account. The site is published to Pages if needed, then the hostname is attached.</p>
+      <form id="dom-link-form" class="row end">
+        <div class="field"><label>Domain</label><input name="domain" required placeholder="example.com" /></div>
+        <div class="field"><label>Website</label><select name="websiteId" required><option value="">Select…</option>${siteOpts}</select></div>
+        <div class="field" style="flex:0 0 auto"><label>&nbsp;</label><button class="btn primary" type="submit">Link domain</button></div>
+      </form>
+      <div class="inline" style="margin-top:8px">
+        <button type="button" class="btn small" id="dom-refresh-owned">Load owned CF domains</button>
+        <span class="msg" id="dom-link-msg"></span>
+      </div>
+      <div id="dom-owned" style="margin-top:10px"></div>
+    </div>
+    <div class="card">
+      <h3>Linked &amp; registered</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Domain</th><th>Status</th><th>Website</th><th>Price</th><th></th></tr></thead>
+        <tbody id="dom-linked-body">${linked.map((d) => `
+          <tr>
+            <td><a href="${esc(d.publicUrl || ('https://' + d.domain))}" target="_blank" rel="noopener">${esc(d.domain)}</a>
+              <div class="hint">${esc(d.pagesProject || '')}</div></td>
+            <td>${esc(d.status)}${d.registrationState ? `<div class="hint">${esc(d.registrationState)}</div>` : ''}</td>
+            <td>${d.websiteId ? `<a href="#/websites/${esc(d.websiteId)}">#${esc(d.websiteId)}</a>` : '—'}</td>
+            <td class="mono">${d.price != null ? esc(String(d.price)) + (d.currency ? ' ' + esc(d.currency) : '') : '—'}</td>
+            <td class="actions">
+              ${d.status === 'registering' ? `<button class="btn small" data-act="dom-poll" data-domain="${esc(d.domain)}">Refresh status</button>` : ''}
+              ${d.status === 'registered' && d.websiteId ? `<button class="btn small" data-act="dom-link-row" data-domain="${esc(d.domain)}" data-site="${esc(d.websiteId)}">Link to site</button>` : ''}
+              ${d.status === 'linked' ? `<button class="btn small danger" data-act="dom-unlink" data-domain="${esc(d.domain)}">Unlink</button>` : ''}
+            </td>
+          </tr>`).join('') || '<tr><td colspan="5" class="empty">No domains yet — search above to get started.</td></tr>'}
+        </tbody>
+      </table></div>
+    </div>`;
+
+  const resultsEl = $('#dom-search-results');
+  const searchMsg = $('#dom-search-msg');
+
+  function priceLabel(d) {
+    if (d.registrationCost == null) return '';
+    return `${d.registrationCost}${d.currency ? ' ' + d.currency : ''}/yr`;
+  }
+
+  function renderSearchResults(domains) {
+    if (!domains.length) {
+      resultsEl.innerHTML = '<p class="hint">No suggestions. Try another keyword, then Check a full name like brand.com.</p>';
+      return;
+    }
+    resultsEl.innerHTML = `<div class="table-wrap"><table>
+      <thead><tr><th>Domain</th><th>Available</th><th>Price</th><th></th></tr></thead>
+      <tbody>${domains.map((d) => `<tr>
+        <td class="mono">${esc(d.domain)}</td>
+        <td class="${d.registrable ? 'check-pass' : 'check-fail'}">${d.registrable ? 'Yes' : 'No'}${d.reason ? `<div class="hint">${esc(d.reason)}</div>` : ''}</td>
+        <td>${esc(priceLabel(d) || '—')}</td>
+        <td class="actions">
+          <button type="button" class="btn small" data-act="dom-check" data-domain="${esc(d.domain)}">Check</button>
+          <button type="button" class="btn small primary" data-act="dom-buy" data-domain="${esc(d.domain)}" ${d.registrable ? '' : 'disabled'}>Buy</button>
+          <button type="button" class="btn small" data-act="dom-use-link" data-domain="${esc(d.domain)}">Use to link</button>
+        </td>
+      </tr>`).join('')}</tbody></table></div>`;
+  }
+
+  $('#dom-search-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const body = formObject(e.target);
+    setMsg(searchMsg, 'Searching…', '');
+    try {
+      const r = await api.domainsSearch(body.q, body.leadId ? { leadId: Number(body.leadId) } : {});
+      const domains = ((r.data && r.data.domains) || []);
+      setMsg(searchMsg, `${domains.length} suggestion(s)`, 'ok');
+      renderSearchResults(domains);
+    } catch (err) {
+      setMsg(searchMsg, err.message || 'Search failed', 'err');
+    }
+  };
+
+  $('#dom-link-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const body = formObject(e.target);
+    const msg = $('#dom-link-msg');
+    setMsg(msg, 'Linking (may publish preview first)…', '');
+    try {
+      const r = await api.domainsLink({
+        domain: body.domain,
+        websiteId: Number(body.websiteId),
+        forcePublish: true,
+      });
+      setMsg(msg, `Linked — ${((r.data && r.data.publicUrl) || body.domain)}`, 'ok');
+      pageDomains();
+    } catch (err) {
+      setMsg(msg, err.message || 'Link failed', 'err');
+    }
+  };
+
+  $('#dom-refresh-owned').onclick = async () => {
+    const host = $('#dom-owned');
+    const msg = $('#dom-link-msg');
+    setMsg(msg, 'Loading owned domains…', '');
+    try {
+      const r = await api.domainsOwned();
+      const domains = (r.data && r.data.domains) || [];
+      setMsg(msg, `${domains.length} on Cloudflare Registrar`, 'ok');
+      host.innerHTML = domains.length
+        ? `<div class="table-wrap"><table><thead><tr><th>Domain</th><th>Status</th><th></th></tr></thead><tbody>${
+          domains.map((d) => `<tr>
+            <td class="mono">${esc(d.domain)}</td>
+            <td>${esc(d.status || '—')}${d.expiresAt ? `<div class="hint">expires ${esc(d.expiresAt)}</div>` : ''}</td>
+            <td><button type="button" class="btn small" data-act="dom-use-link" data-domain="${esc(d.domain)}">Use to link</button></td>
+          </tr>`).join('')
+        }</tbody></table></div>`
+        : '<p class="hint">No domains on this Cloudflare account yet.</p>';
+    } catch (err) {
+      setMsg(msg, err.message || 'Could not list owned domains', 'err');
+    }
+  };
+
+  delegate(view, {
+    'dom-check': async (t) => {
+      setMsg(searchMsg, 'Checking live availability…', '');
+      try {
+        const r = await api.domainsCheck([t.dataset.domain]);
+        const d = ((r.data && r.data.domains) || [])[0];
+        if (!d) { setMsg(searchMsg, 'No check result', 'err'); return; }
+        setMsg(searchMsg, d.registrable
+          ? `${d.domain} is registrable${d.registrationCost != null ? ` · ${d.registrationCost} ${d.currency || ''}/yr` : ''}`
+          : `${d.domain} not registrable${d.reason ? ': ' + d.reason : ''}`,
+        d.registrable ? 'ok' : 'err');
+      } catch (err) { setMsg(searchMsg, err.message, 'err'); }
+    },
+    'dom-buy': async (t) => {
+      const domain = t.dataset.domain;
+      const form = $('#dom-search-form');
+      const leadId = form && form.leadId ? Number(form.leadId.value) : null;
+      const siteSel = document.querySelector('#dom-link-form select[name="websiteId"]');
+      const websiteId = siteSel && siteSel.value ? Number(siteSel.value) : null;
+      if (!window.confirm(`Purchase ${domain} for 1 year on Cloudflare Registrar?\n\nThis bills the payment method on your Cloudflare account and is non-refundable.`)) return;
+      setMsg(searchMsg, 'Registering…', '');
+      try {
+        const r = await api.domainsRegister({ domain, years: 1, leadId: leadId || undefined, websiteId: websiteId || undefined });
+        const st = (r.data && r.data.status) || 'registering';
+        setMsg(searchMsg, `Registration ${st} for ${domain}`, 'ok');
+        if (websiteId && st === 'registered') {
+          await api.domainsLink({ domain, websiteId, forcePublish: true });
+        }
+        pageDomains();
+      } catch (err) { setMsg(searchMsg, err.message || 'Purchase failed', 'err'); }
+    },
+    'dom-use-link': (t) => {
+      const input = document.querySelector('#dom-link-form input[name="domain"]');
+      if (input) input.value = t.dataset.domain || '';
+      input && input.focus();
+    },
+    'dom-poll': async (t) => {
+      try {
+        await api.domainsStatus(t.dataset.domain);
+        pageDomains();
+      } catch (err) { toast(err.message, 'err'); }
+    },
+    'dom-link-row': async (t) => {
+      try {
+        await api.domainsLink({ domain: t.dataset.domain, websiteId: Number(t.dataset.site), forcePublish: true });
+        toast('Domain linked', 'ok');
+        pageDomains();
+      } catch (err) { toast(err.message, 'err'); }
+    },
+    'dom-unlink': async (t) => {
+      if (!window.confirm(`Unlink ${t.dataset.domain} from its site?`)) return;
+      try {
+        await api.domainsUnlink({ domain: t.dataset.domain });
+        toast('Unlinked', 'ok');
+        pageDomains();
+      } catch (err) { toast(err.message, 'err'); }
+    },
+  });
 }
 
 async function pageDesign(param) {
@@ -1546,6 +2519,25 @@ function reviewHtml(r) {
     <details><summary>Raw review</summary>${jsonPre(r)}</details>`;
 }
 
+/** Instruction-review layer (SAFE / BETTER_PATH / PUSH_BACK) from brief.change_request_review. */
+function changeRequestReviewHtml(crr) {
+  if (!crr || typeof crr !== 'object') return '';
+  const cls = String(crr.classification || crr.class || '').toUpperCase();
+  const badge = cls === 'SAFE' ? 'check-pass'
+    : (cls === 'PUSH_BACK' || cls === 'PUSHBACK') ? 'check-fail'
+      : cls ? 'badge warn' : 'hint';
+  const plan = crr.plan || crr.agent_plan || '';
+  const msg = crr.clientMessage || crr.client_message || '';
+  return `<div class="card" style="margin:0 0 10px;padding:10px 12px;background:var(--surface-2,transparent)">
+      <p style="margin:0 0 6px"><strong>Change-request review</strong>
+        ${cls ? ` <span class="${badge}">${esc(cls)}</span>` : ''}
+        ${crr.at ? `<span class="hint"> · ${esc(fmtDate(crr.at))}</span>` : ''}</p>
+      ${msg ? `<p style="margin:0 0 6px">${esc(msg)}</p>` : ''}
+      ${plan ? `<p class="hint" style="margin:0;white-space:pre-wrap">${esc(typeof plan === 'string' ? plan : JSON.stringify(plan, null, 2))}</p>` : ''}
+      <details style="margin-top:6px"><summary>Raw classification</summary>${jsonPre(crr)}</details>
+    </div>`;
+}
+
 async function pageDesignDetail(id) {
   const r = await api.designGet(id);
   const job = r.data.job;
@@ -1570,10 +2562,11 @@ async function pageDesignDetail(id) {
     </div>
     <div class="detail-grid">
       <div>
-        <div class="card"><h3>Instructions</h3><p style="white-space:pre-wrap;margin:0">${esc(job.instructions)}</p>
-          ${job.type === 'website' ? `<div class="inline" style="margin-top:10px"><label class="lbl" style="margin:0">Site shape</label>
-            <select id="dd-shape" style="width:auto">${optionList(['multipage', 'landing'], job.site_shape || 'multipage')}</select>
-            <button class="btn small" data-act="shape">Update shape</button></div>` : ''}
+        <div class="card"><h3>Instructions</h3>
+          <pre class="shell-log" tabindex="0">${esc(job.instructions || '') || '<span class="shell-empty">(no instructions)</span>'}</pre>
+          ${job.type === 'website' ? `<div class="shell-actions"><label class="lbl" for="dd-shape">Site shape</label>
+            <select id="dd-shape">${optionList(['multipage', 'landing'], job.site_shape || 'multipage')}</select>
+            <button type="button" class="shell-link" data-act="shape">Update shape</button></div>` : ''}
         </div>
 
         <div class="card"><h3>Questions from the agent (${questions.length})</h3>
@@ -1585,16 +2578,20 @@ async function pageDesignDetail(id) {
           </div>`).join('') || '<p class="hint">No questions.</p>'}
         </div>
 
-        <div class="card"><h3>Client email</h3>
+        <div class="card"><h3>Client contact</h3>
           <div class="row end">
             <div class="field"><label class="lbl" for="dd-contact">Contact email</label><input id="dd-contact" type="email" value="${esc(job.contact_email || '')}" /></div>
+            <div class="field"><label class="lbl" for="dd-contact-phone">Contact phone</label><input id="dd-contact-phone" type="tel" value="${esc(job.contact_phone || '')}" placeholder="+1 555 555 5555" /></div>
             <div class="field" style="flex:0 0 auto"><button class="btn" data-act="contact">Save contact</button></div>
           </div>
           <div class="inline">
             <button class="btn small" data-act="email-q">Email questions</button>
             <button class="btn small" data-act="email-d" ${deliverable && job.type !== 'website' ? '' : 'disabled'} title="${job.type === 'website' ? 'Use preview/export for websites' : ''}">Email delivery</button>
+            <button class="btn small" data-act="client-form">Client form link</button>
             <span class="hint">${job.questions_emailed_at ? 'Questions emailed ' + esc(fmtDate(job.questions_emailed_at)) + '. ' : ''}${job.delivery_emailed_at ? 'Delivery emailed ' + esc(fmtDate(job.delivery_emailed_at)) + '.' : ''}</span>
           </div>
+          <p class="hint" style="margin-top:8px">Emails include a public form link so clients can answer questions or request changes without IMAP.</p>
+          <div id="dd-form-link" class="hint mono" style="margin-top:6px;word-break:break-all"></div>
           <details style="margin-top:10px"><summary>Record a client reply</summary>
             <div class="field"><label class="lbl">From email (optional)</label><input id="dd-rfrom" type="email" /></div>
             <div class="field"><label class="lbl">Reply text</label><textarea id="dd-reply" placeholder="Paste the reply. For multiple questions use 1. … 2. … or Q12: …"></textarea></div>
@@ -1604,6 +2601,7 @@ async function pageDesignDetail(id) {
         </div>
 
         <div class="card"><h3>Review &amp; changes</h3>
+          ${changeRequestReviewHtml(brief && brief.change_request_review)}
           <div id="dd-review">${reviewHtml(job.review)}</div>
           <div class="inline" style="margin:8px 0"><button class="btn" data-act="review" ${hasSite ? '' : 'disabled'}>Run review</button>${hasSite ? '' : '<span class="hint">Needs a delivered website.</span>'}</div>
           <div class="field"><label class="lbl">Redesign instructions</label><textarea id="dd-redesign" placeholder="Bigger changes: new look, structure, tone…"></textarea>
@@ -1617,7 +2615,20 @@ async function pageDesignDetail(id) {
       <div>
         <div class="card"><h3>Delivery</h3>
           ${deliverable
-    ? `${hasSite ? '<div id="dd-preview"></div>' : ''}
+    ? `${hasSite ? `<div class="font-toolbar">
+               <p class="hint">Google fonts for this design. Preview updates as you pick; Save keeps site fonts. Style one element in the preview when needed.</p>
+               <div class="font-toolbar-row">
+                 <div class="field"><label class="lbl" for="dd-font-body">Site</label><select id="dd-font-body"></select></div>
+                 <div class="field"><label class="lbl" for="dd-font-heading">Headings</label><select id="dd-font-heading"></select></div>
+                 <button type="button" class="btn small" id="dd-font-save">Save site fonts</button>
+               </div>
+               <hr class="font-toolbar-divider" />
+               <div class="font-toolbar-row is-actions">
+                 <button type="button" class="btn small" id="dd-font-edit">Style an element</button>
+                 <div class="field"><label class="lbl" for="dd-font-element">This element</label><select id="dd-font-element" disabled></select></div>
+                 <span class="msg" id="dd-font-msg"></span>
+               </div>
+             </div><div id="dd-preview"></div>` : ''}
                <div class="inline" style="margin-top:8px">
                  ${job.type === 'website' ? '<button class="btn small" data-act="url">Preview URL</button>' : ''}
                  <button class="btn small" data-act="photos">Add Pexels photos</button>
@@ -1645,7 +2656,17 @@ async function pageDesignDetail(id) {
       </div>
     </div>`;
 
-  if (hasSite) mountPreview($('#dd-preview'), (slug) => api.designRender(id, { editable: false, pageSlug: slug }));
+  let designFontHooks = null;
+  if (hasSite) {
+    const designPreview = mountPreview($('#dd-preview'), (slug) => api.designRender(id, { editable: true, pageSlug: slug }), {
+      onPreview: (data) => { if (designFontHooks) designFontHooks.onPreview(data); },
+    });
+    const designPages = deliverable.pages;
+    const designTheme = deliverable.theme && typeof deliverable.theme === 'object' ? deliverable.theme : {};
+    designFontHooks = bindFontToolbar('dd', designPreview, () => designPages, () => designTheme, (nextPages, nextTheme) =>
+      api.designSaveWebsite(id, nextPages, nextTheme));
+  }
+  fillChangeInstructionBoxes(job);
 
   const changeBody = (kind) => {
     const instr = $(kind === 'improvements' ? '#dd-improve' : '#dd-redesign').value.trim();
@@ -1666,16 +2687,28 @@ async function pageDesignDetail(id) {
       toast('Answer recorded', 'ok');
       pageDesignDetail(id);
     },
-    contact: async () => { await api.designContact(id, $('#dd-contact').value.trim()); toast('Contact saved', 'ok'); },
+    contact: async () => {
+      await api.designContact(id, {
+        email: $('#dd-contact').value.trim(),
+        phone: ($('#dd-contact-phone') && $('#dd-contact-phone').value.trim()) || '',
+      });
+      toast('Contact saved', 'ok');
+    },
     'email-q': async () => {
       const x = (await api.designEmailQuestions(id)).data;
-      $('#dd-email-out').textContent = x && (x.message || x.error) ? (x.message || x.error) : 'Questions email processed.';
-      toast('Questions email processed', 'ok');
+      const msg = x && x.error
+        ? x.error
+        : (x && x.sent ? `Sent to ${x.to}` : (x && (x.message || 'Questions email processed.')));
+      $('#dd-email-out').textContent = msg;
+      toast(x && x.sent ? `Questions emailed to ${x.to}` : (x && x.code === 'SMTP_NOT_CONFIGURED' ? 'SMTP not configured' : 'Questions email processed'), x && x.sent ? 'ok' : '');
     },
     'email-d': async () => {
       const x = (await api.designEmailDelivery(id)).data;
-      $('#dd-email-out').textContent = x && (x.message || x.error) ? (x.message || x.error) : 'Delivery email processed.';
-      toast('Delivery email processed', 'ok');
+      const msg = x && x.error
+        ? x.error
+        : (x && x.sent ? `Sent to ${x.to}` : (x && (x.message || 'Delivery email processed.')));
+      $('#dd-email-out').textContent = msg;
+      toast(x && x.sent ? `Delivery emailed to ${x.to}` : (x && x.code === 'SMTP_NOT_CONFIGURED' ? 'SMTP not configured' : 'Delivery email processed'), x && x.sent ? 'ok' : '');
     },
     reply: async () => {
       const reply = $('#dd-reply').value.trim();
@@ -1684,11 +2717,23 @@ async function pageDesignDetail(id) {
       toast('Reply recorded', 'ok');
       pageDesignDetail(id);
     },
+    'client-form': async () => {
+      const x = (await api.designClientForm(id)).data;
+      const el = $('#dd-form-link');
+      if (el) el.innerHTML = `Client form: <a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.url)}</a>`;
+      try {
+        if (navigator.clipboard && x.url) {
+          await navigator.clipboard.writeText(x.url);
+          toast('Client form link copied', 'ok');
+        } else toast('Client form link ready', 'ok');
+      } catch { toast('Client form link ready', 'ok'); }
+    },
     review: async () => {
       $('#dd-review').innerHTML = '<p class="hint">Reviewing…</p>';
       const x = (await api.designReview(id, {})).data;
       const review = (x && x.review) || (x && x.job && x.job.review) || x;
       $('#dd-review').innerHTML = reviewHtml(review);
+      fillChangeInstructionBoxes(job, review);
     },
     redesign: async () => {
       await api.designRedesign(id, changeBody('redesign'));
@@ -1701,8 +2746,12 @@ async function pageDesignDetail(id) {
       pageDesignDetail(id);
     },
     url: async () => {
+      $('#dd-delivery-out').textContent = 'Publishing preview…';
       const x = (await api.designPreview(id, false)).data;
-      $('#dd-delivery-out').innerHTML = `Server preview: <span class="mono">${esc(x.url || x.path || '')}</span>`;
+      const link = x.url
+        ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.url)}</a>`
+        : esc(x.path || '');
+      $('#dd-delivery-out').innerHTML = `Public preview: ${link}${x.via ? `<div class="hint">via ${esc(x.via)}</div>` : ''}`;
     },
     photos: async () => {
       const x = (await api.designImages(id, {})).data;
@@ -1755,7 +2804,7 @@ async function pageOutreach(param, query) {
   const mbs = st.messagesByStatus || {};
   view.innerHTML = `
     <div class="page-head">
-      <div><h1>Outreach</h1><p class="lede">Templates, campaigns, the send queue and the suppression list. Footer and daily caps are in Settings.</p></div>
+      <div><h1>Outreach</h1><p class="lede">Email and SMS templates, campaigns, the send queue and the suppression list. SMS credentials are in Settings → SMS (or Admin → SMS).</p></div>
       <div class="page-actions"><button class="btn primary" data-act="process">Process queue now</button></div>
     </div>
     <div class="stats-cards">
@@ -1796,11 +2845,34 @@ async function pageOutreach(param, query) {
   if (query && query.new) openCampaignModal();
 }
 
+function confirmCampaignAction({ title, body, confirmLabel, danger }, onConfirm) {
+  openModal({
+    title,
+    body: `<p>${body}</p>`,
+    buttons: [
+      { label: 'Keep', onClick: (m) => m.close() },
+      {
+        label: confirmLabel,
+        cls: danger ? 'danger' : 'primary',
+        onClick: async (m) => {
+          await onConfirm();
+          m.close();
+        },
+      },
+    ],
+  });
+}
+
 async function tabCampaigns(host) {
   const r = (await api.campaigns({ pageSize: 50 })).data || {};
   const rows = asList(r, ['rows', 'campaigns']);
+  const canCancel = (s) => s === 'active' || s === 'paused' || s === 'draft';
   host.innerHTML = `
-    <div class="toolbar"><button class="btn primary" data-act="new">New campaign</button><button class="btn" data-act="compose">Compose single email</button></div>
+    <div class="toolbar">
+      <button class="btn primary" data-act="new">New campaign</button>
+      <button class="btn" data-act="compose">Compose email</button>
+      <button class="btn" data-act="compose-sms">Compose SMS</button>
+    </div>
     <div class="table-wrap"><table>
       <thead><tr><th>Name</th><th>Status</th><th>Queued</th><th>Sent</th><th>Failed</th><th>Suppressed</th><th>Rate/h</th><th></th></tr></thead>
       <tbody>${rows.map((c) => `<tr>
@@ -1810,14 +2882,46 @@ async function tabCampaigns(host) {
           <button class="btn small" data-act="messages" data-id="${c.id}" data-name="${esc(c.name)}">Messages</button>
           ${c.status === 'active' ? `<button class="btn small" data-act="pause" data-id="${c.id}">Pause</button>` : ''}
           ${c.status === 'paused' || c.status === 'draft' ? `<button class="btn small" data-act="resume" data-id="${c.id}">Resume</button>` : ''}
+          ${canCancel(c.status) ? `<button class="btn small" data-act="cancel" data-id="${c.id}" data-name="${esc(c.name)}">Cancel</button>` : ''}
+          <button class="btn small danger" data-act="delete" data-id="${c.id}" data-name="${esc(c.name)}">Delete</button>
         </td></tr>`).join('') || '<tr><td colspan="8" class="empty">No campaigns yet.</td></tr>'}</tbody>
     </table></div>`;
   delegate(host, {
     new: () => openCampaignModal(),
-    compose: () => openComposeModal(),
+    compose: () => openComposeModal('email'),
+    'compose-sms': () => openComposeModal('sms'),
     messages: (t) => openMessagesModal(Number(t.dataset.id), t.dataset.name),
     pause: async (t) => { await api.campaignStatus(Number(t.dataset.id), 'paused'); tabCampaigns(host); },
     resume: async (t) => { await api.campaignStatus(Number(t.dataset.id), 'active'); tabCampaigns(host); },
+    cancel: (t) => {
+      const id = Number(t.dataset.id);
+      const name = t.dataset.name || ('#' + id);
+      confirmCampaignAction({
+        title: 'Cancel campaign',
+        body: `Cancel <strong>${esc(name)}</strong>? This permanently stops the campaign. Queued messages will not send. You cannot resume afterwards (unlike Pause).`,
+        confirmLabel: 'Cancel campaign',
+        danger: true,
+      }, async () => {
+        const res = await api.campaignCancel(id);
+        const n = (res.data && res.data.cancelledQueued) || 0;
+        toast(n ? `Campaign cancelled (${n} queued stopped)` : 'Campaign cancelled', 'ok');
+        tabCampaigns(host);
+      });
+    },
+    delete: (t) => {
+      const id = Number(t.dataset.id);
+      const name = t.dataset.name || ('#' + id);
+      confirmCampaignAction({
+        title: 'Delete campaign',
+        body: `Permanently delete <strong>${esc(name)}</strong> and all of its messages? This cannot be undone.`,
+        confirmLabel: 'Delete',
+        danger: true,
+      }, async () => {
+        await api.campaignDelete(id);
+        toast('Campaign deleted', 'ok');
+        tabCampaigns(host);
+      });
+    },
   });
 }
 
@@ -1830,26 +2934,37 @@ async function openMessagesModal(campaignId, name) {
     const body = $('#cm-body', m.el);
     if (!body) return;
     body.innerHTML = `<div class="toolbar"><select id="cm-status"><option value="">All statuses</option>${optionList(['queued', 'sent', 'failed', 'suppressed'], status)}</select></div>
-      <div class="table-wrap"><table><thead><tr><th>To</th><th>Subject</th><th>Status</th><th>Scheduled</th><th>Sent</th><th></th></tr></thead>
-      <tbody>${(r.rows || []).map((x) => `<tr>
-        <td>${esc(x.to_email)}<div class="hint">${esc(x.business_name || '')}</div></td>
-        <td>${esc(x.subject)}${x.error ? `<div class="error hint">${esc(x.error)}</div>` : ''}</td>
+      <div class="table-wrap"><table><thead><tr><th>To</th><th>Channel</th><th>Subject / preview</th><th>Status</th><th>Scheduled</th><th>Sent</th><th></th></tr></thead>
+      <tbody>${(r.rows || []).map((x) => {
+        const ch = (x.channel || 'email') === 'sms' ? 'sms' : 'email';
+        const to = ch === 'sms' ? (x.to_phone || x.to_email) : x.to_email;
+        const preview = ch === 'sms' ? String(x.body || '').slice(0, 80) : x.subject;
+        return `<tr>
+        <td>${esc(to)}<div class="hint">${esc(x.business_name || '')}</div></td>
+        <td>${statusBadge(ch)}</td>
+        <td>${esc(preview)}${x.error ? `<div class="error hint">${esc(x.error)}</div>` : ''}</td>
         <td>${statusBadge(x.status)}</td><td>${esc(fmtDate(x.scheduled_at))}</td><td>${esc(fmtDate(x.sent_at))}</td>
-        <td>${x.status === 'queued' ? `<button class="btn small" data-act="send" data-id="${x.id}">Send now</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">No messages.</td></tr>'}</tbody></table></div>
+        <td>${x.status === 'queued' ? `<button class="btn small" data-act="send" data-id="${x.id}">Send now</button>` : ''}</td></tr>`;
+      }).join('') || '<tr><td colspan="7" class="empty">No messages.</td></tr>'}</tbody></table></div>
       <div class="pagination" id="cm-pager"></div>`;
     $('#cm-status', m.el).value = status;
     $('#cm-status', m.el).onchange = (e) => { status = e.target.value; page = 1; load(); };
     pager($('#cm-pager', m.el), { page: r.page || 1, pages: r.pages || 1, total: r.total || 0 }, (p) => { page = p; load(); });
   }
   delegate(m.el, {
-    send: async (t) => { const x = (await api.emailSend(Number(t.dataset.id))).data; toast(x.sent ? 'Sent to ' + x.to : 'Not sent (suppressed)', x.sent ? 'ok' : ''); load(); },
+    send: async (t) => {
+      const x = (await api.emailSend(Number(t.dataset.id))).data;
+      const label = x.channel === 'sms' ? 'SMS' : 'Email';
+      toast(x.sent ? `${label} sent to ${x.to}` : 'Not sent (suppressed)', x.sent ? 'ok' : '');
+      load();
+    },
   });
   await load();
 }
 
 async function openCampaignModal() {
   const tplR = await api.templates();
-  const templates = tplR.data.templates || [];
+  let templates = tplR.data.templates || [];
   const selected = new Set();
   try { (JSON.parse(sessionStorage.getItem('scout.campaignLeadIds') || '[]') || []).forEach((i) => selected.add(Number(i))); } catch { /* ignore */ }
   sessionStorage.removeItem('scout.campaignLeadIds');
@@ -1860,15 +2975,22 @@ async function openCampaignModal() {
     wide: true,
     body: `<div class="row">
         <div class="field"><label>Name *</label><input id="cp-name" type="text" /></div>
-        <div class="field"><label>Template *</label><select id="cp-tpl">${templates.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('') || '<option value="">(create a template first)</option>'}</select></div>
-        <div class="field" style="max-width:130px"><label>Emails / hour</label><input id="cp-rate" type="number" min="1" max="1000" value="30" /></div>
+        <div class="field"><label>Template *</label><select id="cp-tpl"></select></div>
+        <div class="field"><label>Send via</label>
+          <select id="cp-channel">
+            <option value="email">Email</option>
+            <option value="sms">SMS</option>
+            <option value="both">Email + SMS</option>
+          </select>
+        </div>
+        <div class="field" style="max-width:130px"><label id="cp-rate-label">Per hour</label><input id="cp-rate" type="number" min="1" max="1000" value="30" /></div>
       </div>
       <div class="field"><label>Find leads</label>
         <div class="inline"><input id="cp-q" type="search" placeholder="Search leads…" class="grow" style="flex:1" />
           <select id="cp-status" style="width:auto"><option value="">Any status</option>${optionList(LEAD_STATUSES, '')}</select>
           <button class="btn small" data-act="addall">Add all results</button></div></div>
       <div class="pick-list" id="cp-results"><div class="empty">Search or filter to list leads.</div></div>
-      <p class="hint"><b id="cp-count">0</b> lead(s) selected. Leads without an email, or on the suppression list, are never sent.
+      <p class="hint"><b id="cp-count">0</b> lead(s) selected. <span id="cp-elig-hint">Leads without an email, or on the suppression list, are never sent.</span>
         <button class="link-btn" data-act="clearsel">Clear</button></p>
       <div class="msg" id="cp-msg"></div>`,
     buttons: [
@@ -1878,11 +3000,15 @@ async function openCampaignModal() {
         onClick: async (mm) => {
           const name = $('#cp-name', mm.el).value.trim();
           const templateId = Number($('#cp-tpl', mm.el).value);
+          const channel = $('#cp-channel', mm.el).value || 'email';
           const msg = $('#cp-msg', mm.el);
           if (!name) { setMsg(msg, 'Name is required.', 'err'); return; }
           if (!templateId) { setMsg(msg, 'Choose a template.', 'err'); return; }
           if (!selected.size) { setMsg(msg, 'Select at least one lead.', 'err'); return; }
-          const r = (await api.createCampaign({ name, templateId, leadIds: Array.from(selected), ratePerHour: Number($('#cp-rate', mm.el).value) || 30 })).data;
+          const r = (await api.createCampaign({
+            name, templateId, channel, leadIds: Array.from(selected),
+            ratePerHour: Number($('#cp-rate', mm.el).value) || 30,
+          })).data;
           toast('Campaign created' + (r && r.queued != null ? `: ${r.queued} queued` : ''), 'ok');
           mm.close();
           pageOutreach();
@@ -1891,10 +3017,43 @@ async function openCampaignModal() {
     ],
   });
 
+  function tplHasEmail(t) {
+    return !!(String(t.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+  }
+  function tplHasSms(t) {
+    return !!(String(t.sms_body || '').trim()
+      || ((t.channel || '') === 'sms' && String(t.body || '').trim()));
+  }
+  function fillTemplates() {
+    const ch = $('#cp-channel', m.el).value;
+    const list = templates.filter((t) => {
+      if (ch === 'sms') return tplHasSms(t);
+      if (ch === 'both') return tplHasEmail(t) && tplHasSms(t);
+      return tplHasEmail(t);
+    });
+    $('#cp-tpl', m.el).innerHTML = list.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')
+      || `<option value="">(no templates with ${ch === 'both' ? 'email + SMS' : ch} content)</option>`;
+    const hint = $('#cp-elig-hint', m.el);
+    if (hint) {
+      hint.textContent = ch === 'sms'
+        ? 'Leads without a phone number are never texted.'
+        : ch === 'both'
+          ? 'Email needs a non-suppressed address; SMS needs a phone. Missing either channel is suppressed for that channel only.'
+          : 'Leads without an email, or on the suppression list, are never sent.';
+    }
+    $('#cp-rate-label', m.el).textContent = ch === 'sms' ? 'Texts / hour' : (ch === 'both' ? 'Messages / hour' : 'Emails / hour');
+  }
+  fillTemplates();
+  $('#cp-channel', m.el).onchange = fillTemplates;
+
   const count = () => { $('#cp-count', m.el).textContent = selected.size; };
   function renderResults() {
-    $('#cp-results', m.el).innerHTML = results.map((l) => `<label class="pick-row"><input type="checkbox" data-lead="${l.id}" ${selected.has(l.id) ? 'checked' : ''} />
-      <span><b>${esc(l.business_name)}</b> <span class="hint">#${l.id} · ${esc(l.email || 'no email')} · ${esc(l.status)}</span></span></label>`).join('') || '<div class="empty">No leads found.</div>';
+    const ch = $('#cp-channel', m.el).value;
+    $('#cp-results', m.el).innerHTML = results.map((l) => {
+      const contact = ch === 'sms' ? (l.phone || 'no phone') : (l.email || 'no email');
+      return `<label class="pick-row"><input type="checkbox" data-lead="${l.id}" ${selected.has(l.id) ? 'checked' : ''} />
+      <span><b>${esc(l.business_name)}</b> <span class="hint">#${l.id} · ${esc(contact)} · ${esc(l.status)}</span></span></label>`;
+    }).join('') || '<div class="empty">No leads found.</div>';
   }
   const search = async () => {
     const r = (await api.leads({ q: $('#cp-q', m.el).value.trim(), status: $('#cp-status', m.el).value, pageSize: 100 })).data;
@@ -1919,14 +3078,146 @@ async function openCampaignModal() {
   await search();
 }
 
-async function openComposeModal() {
-  const templates = (await api.templates()).data.templates || [];
+function looksLikeHtmlClient(s) {
+  return typeof s === 'string' && /<\/?[a-z][\s\S]*>/i.test(s);
+}
+
+function plainToEditorHtml(text) {
+  const t = String(text || '').replace(/\r\n/g, '\n').trim();
+  if (!t) return '<p>Hi {{business_name}},</p><p>…</p>';
+  if (looksLikeHtmlClient(t)) return t;
+  return t.split(/\n{2,}/).map((block) => {
+    const inner = esc(block).replace(/\n/g, '<br>');
+    return `<p>${inner}</p>`;
+  }).join('');
+}
+
+/**
+ * Lightweight contenteditable email body editor (bold / links / lists / images).
+ * Stores HTML in a hidden textarea named "body" for form submit.
+ */
+function mountEmailBodyEditor(host, { initialHtml } = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'email-rte';
+  wrap.innerHTML = `
+    <div class="email-rte-toolbar" role="toolbar" aria-label="Formatting">
+      <button type="button" class="btn small" data-cmd="bold" title="Bold"><b>B</b></button>
+      <button type="button" class="btn small" data-cmd="italic" title="Italic"><i>I</i></button>
+      <button type="button" class="btn small" data-cmd="insertUnorderedList" title="Bullet list">• List</button>
+      <button type="button" class="btn small" data-cmd="insertOrderedList" title="Numbered list">1. List</button>
+      <button type="button" class="btn small" data-cmd="link" title="Insert link">Link</button>
+      <button type="button" class="btn small" data-cmd="image" title="Upload image">Image</button>
+      <button type="button" class="btn small" data-cmd="site-shot" title="Insert site screenshot merge field">Site screenshot</button>
+    </div>
+    <div class="email-rte-surface" contenteditable="true" role="textbox" aria-multiline="true"></div>
+    <textarea name="body" class="email-rte-hidden" required hidden></textarea>
+    <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" class="email-rte-file" hidden />`;
+  host.appendChild(wrap);
+  const surface = $('.email-rte-surface', wrap);
+  const hidden = $('.email-rte-hidden', wrap);
+  const fileInput = $('.email-rte-file', wrap);
+
+  const sync = () => { hidden.value = surface.innerHTML.trim(); };
+  const setHtml = (html) => {
+    surface.innerHTML = plainToEditorHtml(html);
+    sync();
+  };
+  setHtml(initialHtml || '<p>Hi {{business_name}},</p><p>…</p>');
+  surface.addEventListener('input', sync);
+  surface.addEventListener('blur', sync);
+
+  const insertHtml = (html) => {
+    surface.focus();
+    try {
+      document.execCommand('insertHTML', false, html);
+    } catch {
+      surface.insertAdjacentHTML('beforeend', html);
+    }
+    sync();
+  };
+
+  $('.email-rte-toolbar', wrap).onclick = async (e) => {
+    const btn = e.target.closest('[data-cmd]');
+    if (!btn) return;
+    e.preventDefault();
+    const cmd = btn.dataset.cmd;
+    surface.focus();
+    if (cmd === 'link') {
+      const url = window.prompt('Link URL (https://… or mailto:…)', 'https://');
+      if (!url) return;
+      const safe = String(url).trim();
+      if (!/^(https?:\/\/|mailto:|tel:)/i.test(safe)) {
+        toast('Links must start with https://, mailto:, or tel:', 'err');
+        return;
+      }
+      document.execCommand('createLink', false, safe);
+      sync();
+      return;
+    }
+    if (cmd === 'image') {
+      fileInput.value = '';
+      fileInput.click();
+      return;
+    }
+    if (cmd === 'site-shot') {
+      // Per-recipient merge field — resolved at campaign create to each lead's email JPEG.
+      insertHtml('<p>{{site_screenshot}}</p>');
+      toast('Inserted {{site_screenshot}} — each recipient gets their own site preview image.', 'ok');
+      return;
+    }
+    document.execCommand(cmd, false, null);
+    sync();
+  };
+
+  fileInput.onchange = async () => {
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      toast('Image must be 5 MB or smaller.', 'err');
+      return;
+    }
+    try {
+      toast('Uploading image…');
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Could not read file'));
+        reader.readAsDataURL(file);
+      });
+      const r = (await api.emailUploadAsset({ data: dataUrl, mimeType: file.type })).data;
+      insertHtml(`<p><img src="${esc(r.url)}" alt="" style="max-width:100%;height:auto;"></p>`);
+      toast('Image added', 'ok');
+    } catch (err) {
+      toast(err.message || 'Upload failed', 'err');
+    }
+  };
+
+  return {
+    getHtml: () => { sync(); return hidden.value; },
+    setHtml,
+    el: wrap,
+  };
+}
+
+async function openComposeModal(channel = 'email') {
+  const ch = channel === 'sms' ? 'sms' : 'email';
+  const tplRes = await api.templates();
+  const all = (tplRes.data && tplRes.data.templates) || [];
+  const templates = all.filter((t) => {
+    if (ch === 'sms') {
+      return !!(String(t.sms_body || '').trim()
+        || ((t.channel || '') === 'sms' && String(t.body || '').trim()));
+    }
+    return !!(String(t.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+  });
   const m = openModal({
-    title: 'Compose a single email',
+    title: ch === 'sms' ? 'Compose a single SMS' : 'Compose a single email',
     wide: true,
     body: `<div class="field"><label>Lead</label><div id="cx-lead"></div></div>
-      <div class="field"><label>Template</label><select id="cx-tpl">${templates.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></div>
-      <div id="cx-prev" class="hint">Preview shows the personalized subject and body. Only VERIFIED / OWNER_PROVIDED facts are filled in.</div>`,
+      <div class="field"><label>Template</label><select id="cx-tpl">${templates.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('') || '<option value="">(create a template with ' + (ch === 'sms' ? 'SMS' : 'email') + ' content first)</option>'}</select></div>
+      <div id="cx-prev" class="hint">${ch === 'sms'
+        ? 'Uses the template’s SMS body. {{website_link}} is the live preview URL. {{site_screenshot}} attaches that lead’s MMS JPEG when captured (falls back to text+link). The lead must have a phone number.'
+        : 'Uses the template’s email subject/body. {{website_link}} is the live preview URL. {{site_screenshot}} inserts that lead’s hosted preview image. {{interested}} / {{uninterested}} become signed response links.'}</div>`,
     buttons: [
       { label: 'Close' },
       {
@@ -1934,8 +3225,14 @@ async function openComposeModal() {
         onClick: async (mm) => {
           const lead = picker.get();
           if (!lead) { toast('Select a lead.', 'err'); return; }
-          const r = (await api.emailCompose(lead.id, Number($('#cx-tpl', mm.el).value), false)).data;
-          $('#cx-prev', mm.el).innerHTML = `<div class="q-card"><b>${esc(r.subject)}</b><p style="white-space:pre-wrap">${esc(r.body)}</p>${(r.missing || []).length ? `<div class="hint">Missing: ${esc(r.missing.join(', '))}</div>` : ''}</div>`;
+          const tid = Number($('#cx-tpl', mm.el).value);
+          if (!tid) { toast('Choose a template.', 'err'); return; }
+          if (ch === 'sms' && !lead.phone) { toast('This lead has no phone number.', 'err'); return; }
+          const r = (await api.emailCompose(lead.id, tid, false, ch)).data;
+          const bodyHtml = ch === 'sms' || !looksLikeHtmlClient(r.body)
+            ? `<p style="white-space:pre-wrap">${esc(r.body)}</p>`
+            : `<div class="email-preview-body">${r.body}</div>`;
+          $('#cx-prev', mm.el).innerHTML = `<div class="q-card"><b>${esc(ch === 'sms' ? 'SMS' : r.subject)}</b>${bodyHtml}${(r.missing || []).length ? `<div class="hint">Missing: ${esc(r.missing.join(', '))}</div>` : ''}</div>`;
         },
       },
       {
@@ -1943,10 +3240,14 @@ async function openComposeModal() {
         onClick: async (mm) => {
           const lead = picker.get();
           if (!lead) { toast('Select a lead.', 'err'); return; }
-          if (!window.confirm('Send this email now?')) return;
-          const q = (await api.emailCompose(lead.id, Number($('#cx-tpl', mm.el).value), true)).data;
+          const tid = Number($('#cx-tpl', mm.el).value);
+          if (!tid) { toast('Choose a template.', 'err'); return; }
+          if (ch === 'sms' && !lead.phone) { toast('This lead has no phone number.', 'err'); return; }
+          if (!window.confirm(ch === 'sms' ? 'Send this SMS now?' : 'Send this email now?')) return;
+          const q = (await api.emailCompose(lead.id, tid, true, ch)).data;
           const s = (await api.emailSend(q.messageId)).data;
-          toast(s.sent ? 'Sent to ' + s.to : 'Not sent (suppressed)', s.sent ? 'ok' : 'err');
+          const label = s.channel === 'sms' ? 'SMS' : 'Email';
+          toast(s.sent ? `${label} sent to ${s.to}` : 'Not sent (suppressed)', s.sent ? 'ok' : 'err');
           mm.close();
         },
       },
@@ -1955,29 +3256,140 @@ async function openComposeModal() {
   const picker = mountLeadPicker($('#cx-lead', m.el));
 }
 
+/** In-app AI draft for Outreach templates (no window.prompt). Fills email + SMS together. */
+function openAiWriteModal({ existingSubject, existingBody, onApplied }) {
+  const m = openModal({
+    title: 'Help me write with AI',
+    body: `
+      <div class="field">
+        <label for="ai-brief">Writing brief</label>
+        <textarea id="ai-brief" rows="4" placeholder="Tone, offer, angle — e.g. friendly intro for a new local website preview"></textarea>
+        <div class="hint">Optional. Generates an email draft plus a companion SMS with {{website_link}}.</div>
+      </div>
+      <div class="field">
+        <label>Lead for context <span class="hint">(optional)</span></label>
+        <div id="ai-lead"></div>
+        <div class="hint">Search by name, business, or email. Clear the selection for a reusable template.</div>
+      </div>
+      <p class="msg" id="ai-msg"></p>`,
+    buttons: [
+      { label: 'Cancel' },
+      {
+        label: 'Generate',
+        cls: 'primary',
+        onClick: async (mm, btn) => {
+          const brief = ($('#ai-brief', mm.el).value || '').trim();
+          const lead = picker.get();
+          const leadId = lead && lead.id ? Number(lead.id) : undefined;
+          const msg = $('#ai-msg', mm.el);
+          setMsg(msg, 'Generating with AI…');
+          btn.textContent = 'Generating…';
+          try {
+            const r = (await api.emailDraft({
+              prompt: brief || undefined,
+              leadId,
+              existingSubject,
+              existingBody: existingBody || '',
+            })).data;
+            if (typeof onApplied === 'function') onApplied(r, leadId || null);
+            mm.close();
+          } catch (err) {
+            setMsg(msg, err.message || 'AI draft failed', 'err');
+            btn.textContent = 'Generate';
+          }
+        },
+      },
+    ],
+  });
+  const picker = mountLeadPicker($('#ai-lead', m.el), {
+    placeholder: 'Search by name, business, or email…',
+  });
+  const briefEl = $('#ai-brief', m.el);
+  if (briefEl) briefEl.focus();
+  return m;
+}
+
 async function tabTemplates(host) {
   const templates = asList((await api.templates()).data, ['templates', 'rows']);
+  const emailVarChips = ['business_name', 'city', 'category', 'phone', 'website_link', 'site_screenshot', 'interested', 'uninterested']
+    .map((v) => `<code class="var-chip" data-var="{{${v}}}" data-target="email">{{${v}}}</code>`)
+    .join(' ');
+  const smsVarChips = ['business_name', 'city', 'category', 'phone', 'website_link', 'site_screenshot']
+    .map((v) => `<code class="var-chip" data-var="{{${v}}}" data-target="sms">{{${v}}}</code>`)
+    .join(' ');
   host.innerHTML = `
     <div class="grid cols-2" style="align-items:start">
       <div class="card"><h3 id="tp-title">New template</h3>
         <form id="tp-form">
           <input type="hidden" name="id" />
           <div class="field"><label>Name</label><input name="name" required /></div>
-          <div class="field"><label>Subject</label><input name="subject" required /></div>
-          <div class="field"><label>Body</label><textarea name="body" required style="min-height:200px">Hi {{business_name}},\n\n…</textarea>
-            <div class="hint">Variables: <code>{{business_name}}</code> <code>{{city}}</code> <code>{{category}}</code> <code>{{phone}}</code> and other lead columns. Unknown values render empty.</div></div>
+          <div class="field" id="tp-subject-wrap"><label>Email subject</label><input name="subject" id="tp-subject" /></div>
+          <div class="field" id="tp-email-body-wrap">
+            <div class="field-head">
+              <label for="tp-body-host">Email body</label>
+              <button type="button" class="btn small" data-act="ai-write">Help me write with AI</button>
+            </div>
+            <div id="tp-body-host"></div>
+            <div class="hint">Variables: ${emailVarChips}. <code>{{website_link}}</code> is the active published site URL.</div>
+          </div>
+          <div class="field" id="tp-sms-body-wrap">
+            <div class="field-head">
+              <label for="tp-sms-body">SMS body (plain text)</label>
+            </div>
+            <textarea id="tp-sms-body" name="sms_body" rows="4" maxlength="1600" placeholder="Hi {{business_name}} — preview: {{website_link}}"></textarea>
+            <div class="hint">Saved with this template. Keep it short (≤160 ideal). Variables: ${smsVarChips}. Include <code>{{website_link}}</code>. <code>{{site_screenshot}}</code> sends as MMS (media URL) when available, else plain SMS with the preview link.</div>
+            <div class="hint" id="tp-sms-count">0 characters</div>
+            <div class="inline" style="margin-top:8px">
+              <button type="button" class="btn small" data-act="queue-sms">Queue SMS to lead</button>
+              <span class="hint" id="tp-sms-hint"></span>
+            </div>
+          </div>
           <div class="inline"><button class="btn primary" type="submit">Save template</button><button class="btn" type="button" data-act="reset">Reset</button><span class="msg" id="tp-msg"></span></div>
         </form>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Subject</th><th></th></tr></thead>
-        <tbody>${templates.map((t) => `<tr><td>${esc(t.name)}</td><td>${esc(t.subject)}</td>
-          <td class="actions"><button class="btn small" data-act="edit" data-id="${t.id}">Edit</button> <button class="btn small danger" data-act="delete" data-id="${t.id}">Delete</button></td></tr>`).join('')
-    || '<tr><td colspan="3" class="empty">No templates yet.</td></tr>'}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>SMS</th><th></th></tr></thead>
+        <tbody>${templates.map((t) => {
+          const hasEmail = !!(String(t.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+          const hasSms = !!(String(t.sms_body || '').trim()
+            || ((t.channel || '') === 'sms' && String(t.body || '').trim()));
+          const smsPrev = String(t.sms_body || ((t.channel || '') === 'sms' ? t.body : '') || '').slice(0, 40);
+          return `<tr><td>${esc(t.name)}<div class="hint">${esc(t.subject || '')}</div></td>
+            <td>${hasEmail ? statusBadge('email') : '<span class="hint">—</span>'}</td>
+            <td>${hasSms ? `${statusBadge('sms')}<div class="hint">${esc(smsPrev)}</div>` : '<span class="hint">—</span>'}</td>
+          <td class="actions"><button class="btn small" data-act="edit" data-id="${t.id}">Edit</button> <button class="btn small danger" data-act="delete" data-id="${t.id}">Delete</button></td></tr>`;
+        }).join('')
+    || '<tr><td colspan="4" class="empty">No templates yet.</td></tr>'}</tbody></table></div>
     </div>`;
   const form = $('#tp-form', host);
+  const editor = mountEmailBodyEditor($('#tp-body-host', host), {
+    initialHtml: '<p>Hi {{business_name}},</p><p>…</p>',
+  });
+  let draftLeadId = null;
+
+  function updateSmsCount() {
+    const el = $('#tp-sms-body', host);
+    const c = $('#tp-sms-count', host);
+    if (el && c) c.textContent = `${el.value.length} characters`;
+  }
+  $('#tp-sms-body', host).addEventListener('input', updateSmsCount);
+  updateSmsCount();
+
   form.onsubmit = async (e) => {
     e.preventDefault();
     const body = formObject(form);
+    body.body = editor.getHtml();
+    body.sms_body = ($('#tp-sms-body', host).value || '').trim();
+    const hasEmail = !!String(body.body || '').replace(/<[^>]+>/g, '').trim();
+    const hasSms = !!body.sms_body;
+    if (!hasEmail && !hasSms) {
+      setMsg($('#tp-msg', host), 'Provide an email body and/or SMS body.', 'err');
+      return;
+    }
+    if (hasEmail && !String(body.subject || '').trim()) {
+      setMsg($('#tp-msg', host), 'Email subject is required when saving an email body.', 'err');
+      return;
+    }
+    delete body.channel;
     if (!body.id) delete body.id; else body.id = Number(body.id);
     try {
       await api.saveTemplate(body);
@@ -1985,15 +3397,100 @@ async function tabTemplates(host) {
       tabTemplates(host);
     } catch (err) { setMsg($('#tp-msg', host), err.message, 'err'); }
   };
+
+  host.querySelectorAll('.var-chip').forEach((chip) => {
+    chip.style.cursor = 'pointer';
+    chip.title = 'Click to insert';
+    chip.onclick = () => {
+      const v = chip.dataset.var;
+      if (chip.dataset.target === 'sms') {
+        const ta = $('#tp-sms-body', host);
+        const start = ta.selectionStart || ta.value.length;
+        ta.value = ta.value.slice(0, start) + v + ta.value.slice(ta.selectionEnd || start);
+        updateSmsCount();
+        ta.focus();
+        return;
+      }
+      editor.el.querySelector('.email-rte-surface').focus();
+      try { document.execCommand('insertText', false, v); }
+      catch { editor.setHtml(editor.getHtml() + ' ' + v); }
+    };
+  });
+
   delegate(host, {
     reset: () => tabTemplates(host),
+    'queue-sms': async () => {
+      const sms = ($('#tp-sms-body', host).value || '').trim();
+      if (!sms) { toast('Add an SMS body first.', 'err'); return; }
+      if (!draftLeadId) { toast('Use “Help me write with AI” with a lead selected, or compose SMS from Campaigns.', 'err'); return; }
+      try {
+        const q = (await api.smsQueue({ leadId: draftLeadId, body: sms })).data;
+        openModal({
+          title: 'Send SMS now?',
+          body: `<p>Queued for <b>${esc(q.to)}</b>. Send it immediately, or leave it queued.</p>
+            <p class="hint" id="qs-msg"></p>`,
+          buttons: [
+            {
+              label: 'Keep queued',
+              onClick: (mm) => { toast('SMS queued', 'ok'); mm.close(); },
+            },
+            {
+              label: 'Send now',
+              cls: 'primary',
+              onClick: async (mm, btn) => {
+                setMsg($('#qs-msg', mm.el), 'Sending…');
+                btn.textContent = 'Sending…';
+                try {
+                  const s = (await api.emailSend(q.messageId)).data;
+                  toast(s.sent ? `SMS sent to ${s.to}` : 'Queued but not sent', s.sent ? 'ok' : 'err');
+                  mm.close();
+                } catch (err) {
+                  setMsg($('#qs-msg', mm.el), err.message || 'Send failed', 'err');
+                  btn.textContent = 'Send now';
+                }
+              },
+            },
+          ],
+        });
+      } catch (err) {
+        toast(err.message || 'Could not queue SMS', 'err');
+      }
+    },
+    'ai-write': () => {
+      openAiWriteModal({
+        existingSubject: form.subject.value,
+        existingBody: editor.getHtml(),
+        onApplied: (r, leadId) => {
+          draftLeadId = leadId || null;
+          if (r.subject) form.subject.value = r.subject;
+          if (r.body) editor.setHtml(r.body);
+          if (r.sms_body) {
+            $('#tp-sms-body', host).value = r.sms_body;
+            updateSmsCount();
+          }
+          const hint = $('#tp-sms-hint', host);
+          if (hint) {
+            hint.textContent = r.has_phone
+              ? `Lead has phone (${r.lead_phone || 'on file'}).`
+              : (leadId
+                ? 'Lead has no phone — queue SMS will fail until a phone is added.'
+                : '');
+          }
+          setMsg($('#tp-msg', host), 'Draft ready — review email + SMS and save.', 'ok');
+          toast(r.sms_body ? 'AI draft + SMS ready' : 'AI draft applied', 'ok');
+        },
+      });
+    },
     edit: (t) => {
       const tpl = templates.find((x) => String(x.id) === t.dataset.id);
       if (!tpl) return;
       form.id.value = tpl.id;
       form.name.value = tpl.name;
-      form.subject.value = tpl.subject;
-      form.body.value = tpl.body;
+      form.subject.value = tpl.subject === '(SMS)' ? '' : (tpl.subject || '');
+      const legacySms = (tpl.channel || '') === 'sms' && !String(tpl.sms_body || '').trim();
+      editor.setHtml(legacySms ? '<p></p>' : (tpl.body || '<p></p>'));
+      $('#tp-sms-body', host).value = legacySms ? (tpl.body || '') : (tpl.sms_body || '');
+      updateSmsCount();
       $('#tp-title', host).textContent = 'Edit template #' + tpl.id;
       form.scrollIntoView({ behavior: 'smooth', block: 'center' });
     },
@@ -2074,6 +3571,261 @@ async function pagePipeline() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Social (Facebook + Instagram)                                       */
+/* ------------------------------------------------------------------ */
+
+async function pageSocial(_param, query = {}) {
+  const leadIdQ = query.leadId ? Number(query.leadId) : null;
+  const ov = (await api.socialOverview()).data;
+  let leads = [];
+  try {
+    const lr = await api.leads({ pageSize: 200 });
+    leads = asList(lr.data, ['leads', 'rows']);
+  } catch { /* ignore */ }
+
+  let detail = null;
+  let selectedLeadId = leadIdQ;
+  if (query.campaignId) {
+    detail = (await api.socialCampaignGet(Number(query.campaignId))).data;
+    selectedLeadId = detail.campaign && detail.campaign.lead_id;
+  } else if (selectedLeadId) {
+    const camps = (await api.socialCampaigns({ leadId: selectedLeadId })).data.campaigns || [];
+    if (camps[0]) detail = (await api.socialCampaignGet(camps[0].id)).data;
+  }
+
+  if (query.connected === '1') {
+    toast(`Meta connected: ${query.fb || 0} Facebook, ${query.ig || 0} Instagram`, 'ok');
+  }
+
+  const accounts = detail && detail.accounts
+    ? detail.accounts
+    : (selectedLeadId ? ((await api.socialAccounts(selectedLeadId)).data.accounts || []) : []);
+
+  view.innerHTML = `
+    <div class="page-head">
+      <div>
+        <h1>Social</h1>
+        <p class="lede">Facebook + Instagram for website clients. Generate a month of captions (photos optional), send a week for approval, then schedule posts.</p>
+      </div>
+    </div>
+    <div class="stats-cards">
+      <div class="stat-card"><div class="stat-label">Meta app</div><div class="stat-value">${ov.metaConfigured ? 'Ready' : 'Setup'}</div></div>
+      <div class="stat-card"><div class="stat-label">Accounts</div><div class="stat-value">${esc(ov.counts.accounts)}</div></div>
+      <div class="stat-card"><div class="stat-label">Pending approval</div><div class="stat-value">${esc(ov.counts.pendingApproval)}</div></div>
+      <div class="stat-card"><div class="stat-label">Scheduled</div><div class="stat-value">${esc(ov.counts.scheduled)}</div></div>
+      <div class="stat-card"><div class="stat-label">Failed</div><div class="stat-value">${esc(ov.counts.failed)}</div></div>
+    </div>
+    ${!ov.metaConfigured ? '<div class="alert warn">Add <strong>Meta App ID</strong> and secret under <a href="#/settings/social">Settings → Social</a>, then connect a Page.</div>' : ''}
+
+    <div class="card">
+      <h3>Client / lead</h3>
+      <div class="row">
+        <div class="field"><label>Lead</label>
+          <select id="soc-lead">
+            <option value="">Select a lead…</option>
+            ${leads.map((l) => `<option value="${esc(l.id)}" ${Number(l.id) === selectedLeadId ? 'selected' : ''}>${esc(l.business_name || ('#' + l.id))}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="inline" style="margin-top:8px">
+        <button class="btn primary" type="button" data-act="connect" ${selectedLeadId ? '' : 'disabled'}>Connect Facebook / Instagram</button>
+        <button class="btn" type="button" data-act="refresh">Refresh</button>
+      </div>
+      <div style="margin-top:12px">
+        ${(accounts || []).map((a) => `
+          <div class="kv"><span class="k">${esc(a.platform)}</span>
+            <span>${esc(a.account_name || a.account_id)} ${statusBadge(a.status)}
+              <button class="btn small danger" type="button" data-act="disconnect" data-id="${esc(a.id)}">Disconnect</button>
+            </span></div>`).join('') || (selectedLeadId ? '<p class="hint">No accounts connected yet.</p>' : '<p class="hint">Pick a lead to connect accounts.</p>')}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Generate month</h3>
+      <p class="hint">Creates ~30 draft posts from the lead brief. Images stay off unless you opt in (Instagram needs a photo to publish).</p>
+      <form id="soc-gen">
+        <div class="row">
+          <div class="field"><label>Month start</label><input name="monthStart" type="date" value="${esc(new Date().toISOString().slice(0, 10))}" required /></div>
+          <div class="field"><label>Days</label><input name="days" type="number" min="7" max="60" value="30" /></div>
+          <div class="field"><label>Client email (approval)</label><input name="clientEmail" type="email" placeholder="client@example.com" value="${esc((detail && detail.campaign && detail.campaign.client_email) || '')}" /></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Require client approval</label>
+            <select name="requireClientApproval"><option value="1" selected>Yes — weekly email</option><option value="0">No — schedule immediately</option></select>
+          </div>
+          <div class="field"><label>Include images</label>
+            <select name="withImages"><option value="0" selected>No (text OK; IG skipped without photo)</option><option value="1">Yes (Pexels when configured)</option></select>
+          </div>
+        </div>
+        <div class="field"><label>Brief (optional)</label><textarea name="brief" placeholder="Promo Tuesdays, keep tone friendly, no politics…"></textarea></div>
+        <div class="inline"><button class="btn primary" type="submit" ${selectedLeadId ? '' : 'disabled'}>Generate month</button><span class="msg" id="soc-gen-msg"></span></div>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="panel-h"><h3>Campaigns</h3>
+        <div class="inline">
+          <button class="btn small" type="button" data-act="weekly-tick">Run weekly send now</button>
+          <button class="btn small" type="button" data-act="publish-due">Publish due now</button>
+        </div>
+      </div>
+      <table class="data">
+        <thead><tr><th>Campaign</th><th>Lead</th><th>Status</th><th>Images</th><th></th></tr></thead>
+        <tbody>
+          ${(ov.campaigns || []).map((c) => `<tr>
+            <td>${esc(c.title || ('#' + c.id))}<div class="sub-line">${esc(c.month_start)}</div></td>
+            <td>${esc(c.business_name || c.lead_id)}</td>
+            <td>${statusBadge(c.status)}</td>
+            <td>${c.with_images ? 'Yes' : 'Optional/off'}</td>
+            <td><button class="btn small" type="button" data-act="open-camp" data-id="${esc(c.id)}">Open</button></td>
+          </tr>`).join('') || '<tr><td colspan="5">No campaigns yet</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+
+    ${detail ? renderSocialCampaignDetail(detail) : ''}`;
+
+  $('#soc-lead').onchange = () => {
+    const id = Number($('#soc-lead').value);
+    window.location.hash = id ? `#/social?leadId=${id}` : '#/social';
+  };
+
+  const gen = $('#soc-gen');
+  if (gen) {
+    gen.onsubmit = async (e) => {
+      e.preventDefault();
+      if (!selectedLeadId) return;
+      const msg = $('#soc-gen-msg');
+      setMsg(msg, 'Generating…');
+      try {
+        const fd = formObject(gen);
+        const r = await api.socialGenerateMonth({
+          leadId: selectedLeadId,
+          monthStart: fd.monthStart,
+          days: Number(fd.days) || 30,
+          withImages: fd.withImages === '1' || fd.withImages === 1,
+          brief: fd.brief || '',
+          clientEmail: fd.clientEmail || '',
+          requireClientApproval: fd.requireClientApproval !== '0',
+        });
+        setMsg(msg, `Created campaign #${r.data.campaign.id} with ${r.data.posts.length} posts.`, 'ok');
+        window.location.hash = `#/social?campaignId=${r.data.campaign.id}`;
+      } catch (err) { setMsg(msg, err.message, 'err'); }
+    };
+  }
+
+  delegate(view, {
+    refresh: () => pageSocial(_param, query),
+    connect: async () => {
+      if (!selectedLeadId) return;
+      const r = await api.socialOauthStart(selectedLeadId, `#/social?leadId=${selectedLeadId}`);
+      window.location.href = r.data.url;
+    },
+    disconnect: async (t) => {
+      if (!confirm('Disconnect this account?')) return;
+      await api.socialDisconnect(Number(t.dataset.id));
+      toast('Disconnected', 'ok');
+      pageSocial(_param, query);
+    },
+    'open-camp': (t) => { window.location.hash = `#/social?campaignId=${t.dataset.id}`; },
+    'weekly-tick': async () => {
+      const r = await api.socialWeeklyTick();
+      toast(`Weekly tick: ${r.data.campaigns || 0} campaign(s)`, 'ok');
+      pageSocial(_param, query);
+    },
+    'publish-due': async () => {
+      const r = await api.socialPublishDue({});
+      toast(`Publish due: ${r.data.published || 0}`, 'ok');
+      pageSocial(_param, query);
+    },
+    'send-week': async (t) => {
+      const r = await api.socialSendWeek(Number(t.dataset.id), true);
+      if (r.data.approveUrl) toast('Week packed — check email / copy link from response', 'ok');
+      else toast(r.data.reason || 'Done', 'ok');
+      if (r.data.approveUrl) {
+        openModal({
+          title: 'Weekly batch',
+          body: `<p>${r.data.sent ? 'Email sent to ' + esc(r.data.to) : 'Email not sent (SMTP?). Share this link:'}</p>
+            <p class="mono" style="word-break:break-all">${esc(r.data.approveUrl || '')}</p>
+            ${r.data.sendError ? `<p class="error">${esc(r.data.sendError)}</p>` : ''}`,
+          buttons: [{ label: 'Close' }],
+        });
+      }
+      pageSocial(_param, { campaignId: String(t.dataset.id) });
+    },
+    'camp-status': async (t) => {
+      await api.socialCampaignStatus(Number(t.dataset.id), t.dataset.status);
+      toast('Campaign updated', 'ok');
+      pageSocial(_param, { campaignId: String(t.dataset.id) });
+    },
+    'approve-posts': async (t) => {
+      const ids = [...view.querySelectorAll('.soc-post-pick:checked')].map((el) => Number(el.value));
+      if (!ids.length) { toast('Select posts', 'err'); return; }
+      await api.socialApprovePosts(ids);
+      toast('Scheduled ' + ids.length + ' posts', 'ok');
+      pageSocial(_param, { campaignId: t.dataset.camp });
+    },
+    'publish-one': async (t) => {
+      const r = await api.socialPublishPost(Number(t.dataset.id));
+      toast(`Publish: ${r.data.status}`, r.data.status === 'posted' ? 'ok' : 'err');
+      pageSocial(_param, { campaignId: t.dataset.camp });
+    },
+    'save-post': async (t) => {
+      const id = Number(t.dataset.id);
+      const card = t.closest('.soc-post');
+      const caption = $('.soc-cap', card).value;
+      const scheduled_at = $('.soc-when', card).value
+        ? new Date($('.soc-when', card).value).toISOString()
+        : null;
+      await api.socialUpdatePost(id, { caption, scheduled_at });
+      toast('Post saved', 'ok');
+    },
+  });
+}
+
+function renderSocialCampaignDetail(detail) {
+  const c = detail.campaign;
+  const posts = detail.posts || [];
+  return `
+    <div class="card">
+      <div class="panel-h">
+        <h3>${esc(c.title || ('Campaign #' + c.id))}</h3>
+        <div class="inline">
+          <button class="btn small primary" type="button" data-act="send-week" data-id="${esc(c.id)}">Send this week</button>
+          <button class="btn small" type="button" data-act="approve-posts" data-camp="${esc(c.id)}">Approve selected → schedule</button>
+          ${c.status === 'active'
+    ? `<button class="btn small" type="button" data-act="camp-status" data-id="${esc(c.id)}" data-status="paused">Pause</button>`
+    : `<button class="btn small" type="button" data-act="camp-status" data-id="${esc(c.id)}" data-status="active">Activate</button>`}
+        </div>
+      </div>
+      <p class="hint">${statusBadge(c.status)} · approval ${c.require_client_approval ? 'on' : 'off'} · images ${c.with_images ? 'on' : 'optional/off'} · ${esc(c.client_email || 'no client email')}</p>
+      <div class="soc-posts">
+        ${posts.map((p) => `
+          <div class="card soc-post" style="margin:10px 0">
+            <label class="inline"><input type="checkbox" class="soc-post-pick" value="${esc(p.id)}" /> <strong>#${esc(p.day_index)}</strong> ${statusBadge(p.status)}</label>
+            <div class="meta hint">${esc((p.platforms || []).join(', '))} · ${p.with_image ? 'photo' : 'text only'}${p.publish_error ? ` · <span class="error">${esc(p.publish_error)}</span>` : ''}</div>
+            <div class="field"><label>When (local)</label>
+              <input class="soc-when" type="datetime-local" value="${esc(toLocalInput(p.scheduled_at))}" /></div>
+            <div class="field"><label>Caption</label><textarea class="soc-cap" rows="3">${esc(p.caption || '')}</textarea></div>
+            ${p.image_url ? `<img src="${esc(p.image_url)}" alt="" style="max-width:180px;border-radius:8px" />` : ''}
+            <div class="inline">
+              <button class="btn small" type="button" data-act="save-post" data-id="${esc(p.id)}">Save</button>
+              <button class="btn small" type="button" data-act="publish-one" data-id="${esc(p.id)}" data-camp="${esc(c.id)}">Publish now</button>
+            </div>
+          </div>`).join('') || '<p class="hint">No posts</p>'}
+      </div>
+    </div>`;
+}
+
+function toLocalInput(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/* ------------------------------------------------------------------ */
 /* Jobs (web-only scheduled jobs)                                      */
 /* ------------------------------------------------------------------ */
 
@@ -2083,9 +3835,9 @@ async function pageJobs() {
   const jobs = asList(d, ['jobs', 'rows']);
   const types = (Array.isArray(d.types) && d.types.length)
     ? d.types
-    : ['discovery', 'outreach_process', 'imap_poll', 'design_poll_notify', 'custom'];
+    : ['discovery', 'outreach_process', 'imap_poll', 'design_poll_notify', 'social_weekly', 'social_publish', 'hands_off', 'hands_off_digest', 'custom'];
   view.innerHTML = `
-    <div class="page-head"><div><h1>Jobs</h1><p class="lede">Schedule discovery, outreach processing, IMAP inbox poll and custom work — also available via MCP <code>jobs.*</code>. Jobs honor the automation kill switch.</p></div></div>
+    <div class="page-head"><div><h1>Jobs</h1><p class="lede">Schedule discovery, outreach, IMAP, social weekly send / publish, and custom work — also available via MCP <code>jobs.*</code>. Jobs honor the automation kill switch.</p></div></div>
     <div class="card"><h3>Create job</h3>
       <form id="job-form">
         <div class="row">
@@ -2297,18 +4049,44 @@ async function pageMcp() {
 /* Settings                                                            */
 /* ------------------------------------------------------------------ */
 
-async function pageSettings() {
+let settingsTab = 'team';
+
+const SETTINGS_TABS = [
+  ['team', 'Team', 'sec-team'],
+  ['ai', 'AI', 'sec-ai'],
+  ['cost', 'Cost', 'sec-cost'],
+  ['prompts', 'Prompts', 'sec-prompts'],
+  ['automation', 'Automation', 'sec-automation'],
+  ['handsoff', 'Hands-off', 'sec-hands-off'],
+  ['agent', 'Design agent', 'sec-agent'],
+  ['learning', 'Design learning', 'sec-learning'],
+  ['discovery', 'Discovery', 'sec-discovery'],
+  ['email', 'Email', 'sec-smtp'],
+  ['sms', 'SMS', 'sec-sms'],
+  ['social', 'Social', 'sec-meta'],
+  ['cloudflare', 'Cloudflare', 'sec-cf'],
+  ['keys', 'Provider keys', 'sec-keys'],
+  ['footer', 'Footer & scoring', 'sec-mail'],
+];
+
+async function pageSettings(param) {
   const safe = (p) => p.then((r) => r.data, () => null);
-  const [setR, promptsR, schedR, provR, usageR, aiR, cfR] = await Promise.all([
+  const [setR, promptsR, schedR, provR, usageR, aiR, cfR, hoR] = await Promise.all([
     api.settingsGet(), safe(api.prompts()), safe(api.discoveryGet()), safe(api.providers()),
-    safe(api.aiUsage(30)), safe(api.aiStatus()), safe(api.cfGet()),
+    safe(api.aiUsage(30)), safe(api.aiStatus()), safe(api.cfGet()), safe(api.handsOffStatus()),
   ]);
   const s = (setR.data && setR.data.settings) || {};
   const prompts = asList(promptsR, ['prompts', 'rows']);
   const sched = schedR || {};
+  const ho = hoR || {};
   const providers = asList(provR, ['providers']).filter((p) => p.name !== 'csv' && p.name !== 'manual');
   const paused = s.automation_paused === '1';
   automationPaused = paused;
+
+  const requested = (param && String(param).split('/')[0]) || settingsTab || 'team';
+  settingsTab = SETTINGS_TABS.some(([k]) => k === requested) ? requested : 'team';
+  const activeSec = (SETTINGS_TABS.find(([k]) => k === settingsTab) || SETTINGS_TABS[0])[2];
+  const showSec = (id) => (id === activeSec ? '' : ' hidden');
 
   const f = (key, label, o) => {
     const opt = o || {};
@@ -2326,13 +4104,11 @@ async function pageSettings() {
 
   view.innerHTML = `
     <div class="page-head"><div><h1>Settings</h1><p class="lede">Provider keys, spend limits, prompts, email, publishing and the kill switch for this workspace. Secrets are write-only: they are never shown again after saving. Changing settings requires an owner or admin role.</p></div></div>
-    <div class="settings-layout">
-      <nav class="settings-nav" aria-label="Settings sections">
-        ${[['sec-team', 'Team'], ['sec-ai', 'AI'], ['sec-cost', 'Cost'], ['sec-prompts', 'Prompts'], ['sec-automation', 'Automation'], ['sec-agent', 'Design agent'], ['sec-learning', 'Design learning'], ['sec-discovery', 'Discovery'], ['sec-smtp', 'Email'], ['sec-cf', 'Cloudflare'], ['sec-keys', 'Provider keys'], ['sec-mail', 'Footer & scoring']].map(([id, l]) => `<button data-act="goto" data-id="${id}">${esc(l)}</button>`).join('')}
-      </nav>
-      <div class="settings-main">
+    <div class="tabs settings-tabs" id="settings-tabs" role="tablist" aria-label="Settings sections">${SETTINGS_TABS.map(([k, l]) =>
+      `<button type="button" role="tab" data-tab="${k}" class="${k === settingsTab ? 'active' : ''}" aria-selected="${k === settingsTab ? 'true' : 'false'}">${esc(l)}</button>`).join('')}</div>
+    <div class="settings-main">
 
-        <section class="card" id="sec-team"><h2>Team invites</h2>
+        <section class="card" id="sec-team"${showSec('sec-team')}><h2>Team invites</h2>
           <p class="hint">Invite teammates by email. They must register or sign in with that exact address. Owners and admins can invite.</p>
           <form id="invite-form" class="row" style="align-items:flex-end">
             <div class="field" style="flex:2"><label for="inv-email">Email</label><input id="inv-email" name="email" type="email" required placeholder="teammate@example.com" /></div>
@@ -2345,7 +4121,7 @@ async function pageSettings() {
           <div id="inv-list" style="margin-top:14px"><p class="hint">Loading invites…</p></div>
         </section>
 
-        <section class="card" id="sec-ai"><h2>AI provider</h2>
+        <section class="card" id="sec-ai"${showSec('sec-ai')}><h2>AI provider</h2>
           <p class="hint">Each task can use its own model; a blank row uses the default.</p>
           <div class="spend">AI spend — today: ${money(usageR && usageR.todayUsd)} · this month: ${money(usageR && usageR.monthUsd)} · ${aiR && aiR.configured ? 'API key configured' : 'no API key'}</div>
           ${secret('ai.api_key', 'API key', 'Stored on the server; never displayed again.')}
@@ -2358,28 +4134,49 @@ async function pageSettings() {
           ${save('sec-ai', 'Save AI settings')}
         </section>
 
-        <section class="card" id="sec-cost"><h2>Cost controls</h2>
+        <section class="card" id="sec-cost"${showSec('sec-cost')}><h2>Cost controls</h2>
           <p class="hint">Hard stops for AI spend and daily production.</p>
-          <div class="row">${f('cost.daily_budget_usd', 'Daily AI budget (USD)', { type: 'number', step: '0.5', min: 0 })}${f('cost.max_websites_per_day', 'Max websites / day', { type: 'number', min: 0 })}${f('cost.max_outreach_per_day', 'Max outreach emails / day', { type: 'number', min: 0 })}</div>
+          <div class="row">${f('cost.daily_budget_usd', 'Daily AI budget (USD)', { type: 'number', step: '0.5', min: 0 })}${f('cost.max_websites_per_day', 'Max websites / day', { type: 'number', min: 0 })}${f('cost.max_outreach_per_day', 'Max outreach / day (email + SMS)', { type: 'number', min: 0 })}</div>
           <div class="row">${f('cost.per_1k_prompt', 'Cost / 1k prompt tokens (USD)', { type: 'number', step: '0.0001', min: 0 })}${f('cost.per_1k_completion', 'Cost / 1k completion tokens (USD)', { type: 'number', step: '0.0001', min: 0 })}</div>
           ${save('sec-cost', 'Save cost controls')}
         </section>
 
-        <section class="card" id="sec-prompts"><h2>Prompt library</h2>
+        <section class="card" id="sec-prompts"${showSec('sec-prompts')}><h2>Prompt library</h2>
           <p class="hint">System prompts for each AI task. Restore brings back the shipped default.</p>
           <div class="field" style="max-width:320px"><label for="pr-sel">Prompt</label><select id="pr-sel">${prompts.map((p) => `<option value="${esc(p.key)}">${esc(p.name || p.key)}</option>`).join('')}</select></div>
           <div class="field"><label for="pr-body">Body</label><textarea id="pr-body" rows="10" class="mono"></textarea></div>
           <div class="inline"><button class="btn primary" data-act="prompt-save">Save prompt</button><button class="btn" data-act="prompt-reset">Restore default</button><span class="msg" id="pr-msg"></span></div>
         </section>
 
-        <section class="card" id="sec-automation"><h2>Automation</h2>
+        <section class="card" id="sec-automation"${showSec('sec-automation')}><h2>Automation</h2>
           <p class="hint">Pause stops scanning, generation, campaigns, scheduled jobs and AI actions.</p>
           <p>Status: <strong id="auto-status">${paused ? 'Paused' : 'Running'}</strong></p>
           <div class="inline"><button class="btn" data-act="auto-toggle" id="auto-toggle">${paused ? 'Resume automation' : 'Pause automation'}</button></div>
           <div style="margin-top:16px"><button class="big-danger" data-act="auto-stop">Emergency stop</button></div>
         </section>
 
-        <section class="card" id="sec-agent"><h2>Design agent trigger</h2>
+        <section class="card" id="sec-hands-off"${showSec('sec-hands-off')}><h2>Hands-off mode</h2>
+          <p class="hint">Unattended pipeline: discover → score → Meta Muse builds via tools → publish → email/SMS → follow-up → owner digest. Requires platform Meta Muse Model API key (<code>muse.model_*</code> in Admin). Honors the automation pause switch.</p>
+          <p class="hint">Muse: <strong>${ho.museConfigured ? 'configured' : 'not configured'}</strong>${ho.museModel ? ' · ' + esc(ho.museModel) : ''} · Last run: ${esc(ho.lastRunAt || s['hands_off.last_run_at'] || '—')} · Last digest: ${esc(ho.lastDigestAt || s['hands_off.last_digest_at'] || '—')}</p>
+          <div class="row">
+            ${f('hands_off.enabled', 'Hands-off', { options: onOff })}
+            ${f('hands_off.min_score', 'Min score to build', { type: 'number', min: 0, def: '50' })}
+            ${f('hands_off.max_sites_per_day', 'Max sites / day', { type: 'number', min: 0, def: '5' })}
+            ${f('hands_off.followup_days', 'Follow-up days', { type: 'number', min: 1, def: '3' })}
+          </div>
+          <div class="row">
+            ${f('hands_off.channel', 'Outreach channel', { options: [['both', 'Email + SMS'], ['email', 'Email only'], ['sms', 'SMS only']] })}
+            ${f('hands_off.template_id', 'Template id (optional)', { placeholder: 'first dual-channel template' })}
+            ${f('hands_off.report_email', 'Digest email', { type: 'email', placeholder: 'falls back to support.email' })}
+          </div>
+          <div class="inline">
+            ${save('sec-hands-off', 'Save Hands-off')}
+            <button class="btn" type="button" data-act="hands-off-run">Run tick now</button>
+            <span class="msg" data-msg="hands-off-run"></span>
+          </div>
+        </section>
+
+        <section class="card" id="sec-agent"${showSec('sec-agent')}><h2>Design agent trigger</h2>
           <p class="hint">When a design job becomes <code>waiting_on_agent</code> the server writes a trigger file and can run a command or POST a webhook (redesign / improvements). Failures never block the queue.</p>
           ${f('design.agent_notify', 'Notify', { options: onOff })}
           ${f('design.agent_trigger_command', 'Trigger command (optional)', { hint: 'Placeholders: <code>{{job_id}}</code>, <code>{{reason}}</code>, <code>{{status}}</code>, <code>{{message}}</code>. Runs on the server.' })}
@@ -2389,14 +4186,14 @@ async function pageSettings() {
           ${save('sec-agent', 'Save design agent trigger')}
         </section>
 
-        <section class="card" id="sec-learning"><h2>Design learning</h2>
+        <section class="card" id="sec-learning"${showSec('sec-learning')}><h2>Design learning</h2>
           <p class="hint">Reviews, redesign requests and client emails feed a short playbook that is added to new design briefs.</p>
           <div class="row">${f('design.learning.enabled', 'Learning', { options: onOff })}${f('design.learning.max_playbook', 'Max playbook lessons', { type: 'number', min: 4, def: '24' })}</div>
           ${save('sec-learning', 'Save learning settings')}
           <div id="st-learning" style="margin-top:12px"></div>
         </section>
 
-        <section class="card" id="sec-discovery"><h2>Discovery schedule</h2>
+        <section class="card" id="sec-discovery"${showSec('sec-discovery')}><h2>Discovery schedule</h2>
           <p class="hint">Runs lead discovery on the server on a schedule. Honors the automation pause switch.</p>
           <div class="row">
             <div class="field"><label>Schedule</label><select id="ds-enabled"><option value="0" ${sched.enabled ? '' : 'selected'}>Off</option><option value="1" ${sched.enabled ? 'selected' : ''}>On</option></select></div>
@@ -2406,7 +4203,7 @@ async function pageSettings() {
           </div>
           <div class="row">
             <div class="field"><label>Provider</label><select id="ds-provider">${(providers.length ? providers : [{ name: sched.provider || 'tavily' }]).map((p) => `<option value="${esc(p.name)}" ${p.name === sched.provider ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
-            <div class="field"><label>Category / niche</label><input id="ds-category" value="${esc(sched.category || '')}" placeholder="Plumber" /></div>
+            <div class="field"><label>Category / niche</label><input id="ds-category" value="${esc(sched.category || '')}" placeholder="Plumber or * for any" /><div class="hint">Use <code>*</code> or <code>any</code> for all niches.</div></div>
             <div class="field"><label>Location</label><input id="ds-location" value="${esc(sched.location || '')}" placeholder="Springfield" /></div>
           </div>
           <div class="row">
@@ -2419,8 +4216,17 @@ async function pageSettings() {
           <p class="hint" id="ds-status" style="margin-top:10px">${esc(sched.enabled ? 'Enabled' : 'Disabled')} · next: ${esc(sched.next_run || '—')} · last: ${esc(sched.last_run || '—')} ${esc(sched.last_status || '')} ${esc(sched.last_error || '')}</p>
         </section>
 
-        <section class="card" id="sec-smtp"><h2>Email (SMTP + IMAP)</h2>
-          <p class="hint">SMTP sends design/outreach mail. IMAP polls for client replies with <code>[Job #N]</code>. OpenAI (Settings → AI) reads each reply and writes clean instructions onto the design job before it is queued for the agent.</p>
+        <section class="card" id="sec-sms"${showSec('sec-sms')}><h2>SMS (Twilio)</h2>
+          <p class="hint">Text-message outreach. When <code>sms.enabled</code> is off or credentials are missing, queued SMS is stub-sent (logged, marked sent) so drafts still work. Platform Admin → SMS can seed defaults for new workspaces.</p>
+          <div class="row">${f('sms.enabled', 'SMS enabled', { options: onOff })}${f('sms.provider', 'Provider', { options: [['twilio', 'Twilio'], ['vonage', 'Vonage (not implemented)'], ['custom', 'Custom → Twilio API']] })}</div>
+          <div class="row">${f('sms.account_sid', 'Account SID')}${f('sms.from_number', 'From number', { placeholder: '+15551234567' })}</div>
+          ${secret('sms.auth_token', 'Auth token')}
+          ${f('sms.webhook_url', 'Inbound webhook URL (optional)', { placeholder: 'https://…' })}
+          ${save('sec-sms', 'Save SMS settings')}
+        </section>
+
+        <section class="card" id="sec-smtp"${showSec('sec-smtp')}><h2>Email (SMTP + IMAP)</h2>
+          <p class="hint">SMTP sends design/outreach mail. Each job email also includes a public <strong>client form</strong> link for answers and change requests (works without IMAP). Optional IMAP still polls replies with <code>[Job #N]</code>.</p>
           <h3 style="margin:12px 0 8px;font-size:15px">SMTP (outbound)</h3>
           <div class="row">${f('smtp.host', 'Host', { placeholder: 'mail.example.com' })}${f('smtp.port', 'Port', { type: 'number', min: 1 })}${f('smtp.secure', 'Use TLS (port 465)', { options: [['0', 'No (STARTTLS / plain)'], ['1', 'Yes']] })}</div>
           <div class="row">${f('smtp.user', 'Username')}${secret('smtp.pass', 'Password')}</div>
@@ -2433,8 +4239,18 @@ async function pageSettings() {
           <div class="inline">${save('sec-smtp', 'Save email settings')}<button class="btn" type="button" data-act="imap-test">Poll inbox now</button><span class="msg" data-msg="imap-test"></span></div>
         </section>
 
-        <section class="card" id="sec-cf"><h2>Cloudflare Pages</h2>
-          <p class="hint">Optional. Publish generated sites for a public preview URL. Token needs Account → Cloudflare Pages → Edit. ${cfR ? (cfR.configured ? '<span class="badge ok">configured</span>' : '<span class="badge warn">not configured</span>') : ''}</p>
+        <section class="card" id="sec-meta"${showSec('sec-meta')}><h2>Social (Meta)</h2>
+          <p class="hint">Facebook + Instagram posting. Create a Meta app, add the OAuth redirect
+            <code>${esc((window.location.origin || '') + '/api/v1/social/meta/callback')}</code>,
+            and request Page + Instagram publishing permissions. Images are optional — Instagram skips caption-only posts.</p>
+          ${f('meta.app_id', 'Meta App ID')}
+          ${secret('meta.app_secret', 'Meta App Secret')}
+          ${f('social.image_price_usd', 'Branded image ad price (USD)', { type: 'number', step: '0.01', min: 0, hint: 'Charged per image for Free/Standard. Premium includes social images at $0. Falls back to the platform admin default when blank.' })}
+          ${save('sec-meta', 'Save Meta settings')}
+        </section>
+
+        <section class="card" id="sec-cf"${showSec('sec-cf')}><h2>Cloudflare Pages &amp; Domains</h2>
+          <p class="hint">Publish previews and buy/link domains (Domains page). Token needs Account → Cloudflare Pages → Edit and Account → Registrar → Edit. Set a default payment method on Cloudflare before purchasing. ${cfR ? (cfR.configured ? '<span class="badge ok">configured</span>' : '<span class="badge warn">not configured</span>') : ''}</p>
           <div class="row">${f('cf.account_id', 'Account ID', { placeholder: '32-character hex ID' })}${f('cf.project', 'Pages project', { placeholder: 'my-preview-sites' })}</div>
           ${f('cf.preview_domain', 'Custom preview domain (optional)', { placeholder: 'previews.example.com' })}
           ${secret('cf.api_token', 'API token')}
@@ -2442,7 +4258,7 @@ async function pageSettings() {
           <div id="cf-out" class="hint" style="margin-top:8px"></div>
         </section>
 
-        <section class="card" id="sec-keys"><h2>Provider keys</h2>
+        <section class="card" id="sec-keys"${showSec('sec-keys')}><h2>Provider keys</h2>
           <p class="hint">Write-only. Leave blank to keep the current value.</p>
           ${secret('providers.tavily.api_key', 'Tavily (lead discovery)', 'Required for Leads → Discover with the <code>tavily</code> provider.')}
           ${f('providers.tavily.search_depth', 'Tavily search depth', { options: [['advanced', 'advanced (better relevance)'], ['basic', 'basic (faster / cheaper)']] })}
@@ -2451,13 +4267,18 @@ async function pageSettings() {
           ${save('sec-keys', 'Save provider keys')}
         </section>
 
-        <section class="card" id="sec-mail"><h2>Footer &amp; scoring</h2>
+        <section class="card" id="sec-mail"${showSec('sec-mail')}><h2>Footer &amp; scoring</h2>
           ${f('mail.footer', 'Legal footer appended to every outreach email', { area: true })}
           <div class="row">${f('score.threshold_qualified', 'Qualified threshold (0–100)', { type: 'number', min: 0 })}${f('score.threshold_hot', 'Hot threshold (0–100)', { type: 'number', min: 0 })}${f('app.name', 'App name')}</div>
           ${save('sec-mail', 'Save')}
         </section>
-      </div>
     </div>`;
+
+  $('#settings-tabs').onclick = (e) => {
+    const b = e.target.closest('[data-tab]');
+    if (!b) return;
+    window.location.hash = '#/settings/' + b.dataset.tab;
+  };
 
   mountLearning($('#st-learning'));
 
@@ -2518,7 +4339,6 @@ async function pageSettings() {
   }
 
   delegate(view, {
-    goto: (t) => { const el = document.getElementById(t.dataset.id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
     save: (t) => saveSection(t.dataset.sec, t),
     'prompt-save': async () => {
       await api.promptSave($('#pr-sel').value, $('#pr-body').value);
@@ -2534,11 +4354,18 @@ async function pageSettings() {
       $('#pr-body').value = r.body;
       setMsg($('#pr-msg'), 'Restored', 'ok');
     },
-    'auto-toggle': async () => { await setAutomation(!automationPaused); pageSettings(); },
+    'auto-toggle': async () => {
+      await setAutomation(!automationPaused);
+      settingsTab = 'automation';
+      if (window.location.hash === '#/settings/automation') pageSettings('automation');
+      else window.location.hash = '#/settings/automation';
+    },
     'auto-stop': async () => {
       if (!window.confirm('Pause ALL automation now?')) return;
       await setAutomation(true);
-      pageSettings();
+      settingsTab = 'automation';
+      if (window.location.hash === '#/settings/automation') pageSettings('automation');
+      else window.location.hash = '#/settings/automation';
     },
     'cf-test': async () => {
       const out = $('#cf-out');
@@ -2576,6 +4403,15 @@ async function pageSettings() {
       const r = (await api.discoveryRun()).data;
       setMsg(msg, r && r.skipped ? `Skipped: ${r.reason}` : `Done${r && r.created != null ? ': ' + r.created + ' created' : ''}.`, 'ok');
     },
+    'hands-off-run': async () => {
+      const msg = $('[data-msg="hands-off-run"]');
+      setMsg(msg, 'Running Hands-off tick…');
+      try {
+        const r = (await api.handsOffRun(false)).data;
+        if (r && r.skipped) setMsg(msg, `Skipped: ${r.reason}`, 'err');
+        else setMsg(msg, `Done — discovered ${r.discovered || 0}, scored ${r.scored || 0}, delivered ${r.delivered || 0}.`, 'ok');
+      } catch (err) { setMsg(msg, err.message, 'err'); }
+    },
   });
 }
 
@@ -2609,8 +4445,9 @@ async function pageAdmin(param) {
     ['users', 'Users'],
     ['workspaces', 'Workspaces'],
     ['payments', 'Payments'],
+    ['upsell', 'Upsell tips'],
     ['email', 'Email'],
-    ['sms', 'SMS'],
+    // SMS admin tab hidden until a send path exists (settings still accept sms.* keys).
     ['keys', 'API keys'],
     ['billing', 'Stripe'],
     ['general', 'General'],
@@ -2637,6 +4474,7 @@ async function pageAdmin(param) {
     else if (tab === 'users') await renderAdminUsers(body);
     else if (tab === 'workspaces') await renderAdminWorkspaces(body);
     else if (tab === 'payments') await renderAdminPayments(body);
+    else if (tab === 'upsell') await renderAdminUpsellTips(body);
     else if (tab === 'email' || tab === 'sms' || tab === 'keys' || tab === 'general' || tab === 'billing') await renderAdminSettings(body, tab);
     else if (tab === 'audit') await renderAdminAudit(body);
     else body.innerHTML = '<p class="hint">Unknown tab</p>';
@@ -2682,8 +4520,55 @@ async function renderAdminOverview(el) {
   };
 }
 
+function adminUserStatusLabel(status) {
+  return String(status || 'active') === 'disabled' ? 'blocked' : 'active';
+}
+
+function openAdminEditUser(u) {
+  const m = openModal({
+    title: 'Edit user',
+    body: `<form id="admin-edit-user-form" class="stack">
+      <div><label>Email</label><input name="email" type="email" required value="${esc(u.email || '')}" /></div>
+      <div><label>Name</label><input name="name" value="${esc(u.name || '')}" /></div>
+      <div><label>New password <span class="hint">(optional)</span></label>
+        <input name="password" type="password" minlength="8" autocomplete="new-password" placeholder="Leave blank to keep" /></div>
+      <div class="msg" id="admin-edit-user-msg"></div>
+    </form>`,
+    buttons: [
+      { label: 'Cancel' },
+      {
+        label: 'Save',
+        cls: 'primary',
+        onClick: async (modal) => {
+          const form = $('#admin-edit-user-form', modal.el);
+          const fd = new FormData(form);
+          const body = {
+            email: String(fd.get('email') || '').trim(),
+            name: String(fd.get('name') || '').trim(),
+          };
+          const password = String(fd.get('password') || '');
+          if (password) body.password = password;
+          const msg = $('#admin-edit-user-msg', modal.el);
+          try {
+            await api.adminUpdateUser(u.id, body);
+            setMsg(msg, 'Saved', 'ok');
+            modal.close();
+            toast('User updated', 'ok');
+            pageAdmin('users');
+          } catch (err) {
+            setMsg(msg, err.message || String(err), 'error');
+            throw err;
+          }
+        },
+      },
+    ],
+  });
+  return m;
+}
+
 async function renderAdminUsers(el) {
   const users = asList((await api.adminUsers()).data, ['users']);
+  const selfId = currentUserId;
   el.innerHTML = `
     <div class="panel">
       <div class="panel-h"><h3>Create user</h3></div>
@@ -2706,18 +4591,25 @@ async function renderAdminUsers(el) {
     <div class="panel" style="margin-top:1rem">
       <div class="panel-h"><h3>Users</h3></div>
       <div class="panel-b">
+        <p class="hint" style="margin-bottom:0.75rem">Blocked users cannot sign in (stored as status <code>disabled</code>). Delete soft-removes the account and memberships; workspaces remain.</p>
         <table><thead><tr><th>Email</th><th>Name</th><th>Status</th><th>WS</th><th>Role</th><th></th></tr></thead>
         <tbody>
-          ${users.map((u) => `<tr>
-            <td>${esc(u.email)}</td><td>${esc(u.name)}</td>
-            <td>${esc(u.status || 'active')}</td><td>${esc(u.workspace_count)}</td>
+          ${users.map((u) => {
+            const blocked = String(u.status || 'active') === 'disabled';
+            const isSelf = selfId != null && Number(u.id) === Number(selfId);
+            return `<tr>
+            <td>${esc(u.email)}${isSelf ? ' <span class="hint">(you)</span>' : ''}</td><td>${esc(u.name)}</td>
+            <td>${esc(adminUserStatusLabel(u.status))}</td><td>${esc(u.workspace_count)}</td>
             <td>${Number(u.is_super_admin) ? 'super' : 'user'}</td>
             <td class="row actions">
-              <button class="btn ghost small" data-toggle-sa="${u.id}" data-on="${Number(u.is_super_admin) ? 0 : 1}">${Number(u.is_super_admin) ? 'Demote' : 'Make super'}</button>
-              <button class="btn ghost small" data-toggle-st="${u.id}" data-st="${(u.status || 'active') === 'disabled' ? 'active' : 'disabled'}">${(u.status || 'active') === 'disabled' ? 'Enable' : 'Disable'}</button>
+              <button class="btn ghost small" data-edit="${u.id}">Edit</button>
+              ${isSelf ? '' : `<button class="btn ghost small" data-toggle-sa="${u.id}" data-on="${Number(u.is_super_admin) ? 0 : 1}">${Number(u.is_super_admin) ? 'Demote' : 'Make super'}</button>`}
+              ${isSelf ? '' : `<button class="btn ghost small" data-toggle-st="${u.id}" data-st="${blocked ? 'active' : 'disabled'}">${blocked ? 'Unblock' : 'Block'}</button>`}
               <button class="btn ghost small" data-reset="${u.id}">Reset pw</button>
+              ${isSelf ? '' : `<button class="btn danger small" data-del="${u.id}">Delete</button>`}
             </td>
-          </tr>`).join('') || '<tr><td colspan="6">No users</td></tr>'}
+          </tr>`;
+          }).join('') || '<tr><td colspan="6">No users</td></tr>'}
         </tbody></table>
       </div>
     </div>`;
@@ -2738,13 +4630,27 @@ async function renderAdminUsers(el) {
       msg.className = 'msg error';
     }
   };
+  $$('[data-edit]').forEach((b) => {
+    b.onclick = () => {
+      const u = users.find((x) => Number(x.id) === Number(b.dataset.edit));
+      if (u) openAdminEditUser(u);
+    };
+  });
   $$('[data-toggle-sa]').forEach((b) => b.onclick = async () => {
-    await api.adminUpdateUser(b.dataset.toggleSa, { is_super_admin: Number(b.dataset.on) === 1 });
-    pageAdmin('users');
+    await safeRun(b, async () => {
+      await api.adminUpdateUser(b.dataset.toggleSa, { is_super_admin: Number(b.dataset.on) === 1 });
+      pageAdmin('users');
+    });
   });
   $$('[data-toggle-st]').forEach((b) => b.onclick = async () => {
-    await api.adminUpdateUser(b.dataset.toggleSt, { status: b.dataset.st });
-    pageAdmin('users');
+    const next = b.dataset.st;
+    const label = next === 'disabled' ? 'block' : 'unblock';
+    if (!confirm(`${label === 'block' ? 'Block' : 'Unblock'} this user? ${next === 'disabled' ? 'They will not be able to sign in.' : 'They will be able to sign in again.'}`)) return;
+    await safeRun(b, async () => {
+      await api.adminUpdateUser(b.dataset.toggleSt, { status: next });
+      toast(next === 'disabled' ? 'User blocked' : 'User unblocked', 'ok');
+      pageAdmin('users');
+    });
   });
   $$('[data-reset]').forEach((b) => b.onclick = async () => {
     const password = prompt('New password (min 8 chars)');
@@ -2753,6 +4659,26 @@ async function renderAdminUsers(el) {
       await api.adminUpdateUser(b.dataset.reset, { password });
       toast('Password updated', 'ok');
     } catch (err) { toast(err.message, 'err'); }
+  });
+  $$('[data-del]').forEach((b) => b.onclick = async () => {
+    const u = users.find((x) => Number(x.id) === Number(b.dataset.del));
+    const email = u ? u.email : b.dataset.del;
+    const wsNote = u && Number(u.workspace_count) > 0
+      ? ` They belong to ${u.workspace_count} workspace(s); memberships will be removed and sole-owned workspaces will have no owner (workspaces are kept).`
+      : '';
+    if (!confirm(`Delete user ${email}? This soft-deletes the account and cannot be undone from the UI.${wsNote}`)) return;
+    if (prompt('Type DELETE to confirm') !== 'DELETE') return;
+    await safeRun(b, async () => {
+      const r = await api.adminDeleteUser(b.dataset.del);
+      const sole = (r.data && r.data.soleOwnedWorkspaces) || [];
+      toast(
+        sole.length
+          ? `User deleted. ${sole.length} workspace(s) left without an owner.`
+          : 'User deleted',
+        'ok'
+      );
+      pageAdmin('users');
+    });
   });
 }
 
@@ -2891,9 +4817,10 @@ async function renderAdminSettings(el, group) {
     billing: 'Stripe & subscription',
   }[group] || group;
   const webhookHint = group === 'billing'
-    ? `<p class="hint">Webhook endpoint (sign with your webhook secret): <span class="mono">${esc(window.location.origin)}/api/v1/billing/webhook</span><br/>
-       Events: <span class="mono">checkout.session.completed, customer.subscription.*, invoice.paid, invoice.payment_failed, charge.refunded</span><br/>
-       Create one Product + monthly Price in Stripe, paste the <span class="mono">price_…</span> id below. Prefer a restricted API key.</p>`
+    ? `<p class="hint">Webhook endpoint: <span class="mono">${esc(window.location.origin)}/api/v1/billing/webhook</span><br/>
+       Events: <span class="mono">checkout.session.completed, checkout.session.async_payment_succeeded, customer.subscription.*, invoice.paid, invoice.payment_failed, charge.refunded, charge.dispute.created, radar.early_fraud_warning.created</span><br/>
+       Credits: create a one-time Stripe Price, paste into <span class="mono">stripe.price_id_credits</span>, set pack size + per-image/content rates below.<br/>
+       Create <strong>two Products</strong> in Stripe (Standard + Premium), each with one monthly Price. Paste <span class="mono">price_…</span> ids into the Standard/Premium fields. Leave keys empty until you paste real Dashboard values. Prefer a restricted API key (rk_…).</p>`
     : '<span class="hint">Defaults apply to new workspaces. Secrets are write-only.</span>';
   el.innerHTML = `
     <div class="panel">
@@ -2944,39 +4871,116 @@ async function renderAdminSettings(el, group) {
   };
 }
 
+let billingTab = 'subscription';
+
 async function pageBilling(param, query) {
   const summary = (await api.billingSummary()).data;
   const checkoutFlag = (query && query.checkout) || '';
+  const billTabs = [
+    ['subscription', 'Plans'],
+    ['credits', 'Credits'],
+    ['payments', 'Payment history'],
+    ['account', 'Delete account'],
+  ];
+  const requested = (param && String(param).split('/')[0]) || billingTab || 'subscription';
+  billingTab = billTabs.some(([k]) => k === requested) ? requested : 'subscription';
+  // Checkout return URLs land on #/billing?checkout=… — keep Plans/Credits tab.
+  if (checkoutFlag === 'credits_success') billingTab = 'credits';
+  else if (checkoutFlag) billingTab = 'subscription';
+
+  const currentPlan = String(summary.plan || 'free');
+  const plans = Array.isArray(summary.plans) ? summary.plans : [];
+  const planCards = plans.map((p) => {
+    const isCurrent = p.id === currentPlan;
+    const canCheckout = p.checkout && p.priceConfigured && !summary.isSuperAdmin
+      && (!summary.subscribed || currentPlan !== p.id);
+    let cta = '';
+    if (p.id === 'free') {
+      cta = isCurrent
+        ? '<span class="hint">Current plan</span>'
+        : '<span class="hint">Downgrade via Manage billing after cancel</span>';
+    } else if (isCurrent && summary.subscribed) {
+      cta = '<span class="hint">Current plan</span>';
+    } else if (!p.priceConfigured) {
+      cta = '<span class="hint">Price not configured yet</span>';
+    } else if (canCheckout) {
+      cta = `<button class="btn" type="button" data-checkout-plan="${esc(p.id)}">Subscribe</button>`;
+    } else {
+      cta = '<span class="hint">Use Manage billing to change plans</span>';
+    }
+    return `<div class="plan-card${isCurrent ? ' is-current' : ''}${p.id === 'premium' ? ' is-featured' : ''}">
+      <div class="plan-card-h">
+        <h3>${esc(p.name)}</h3>
+        <div class="plan-price">${esc(p.priceLabel || '')}</div>
+      </div>
+      <p class="hint plan-tagline">${esc(p.tagline || '')}</p>
+      <ul class="plan-features">${(p.features || []).map((f) => `<li>${esc(f)}</li>`).join('')}</ul>
+      <div class="plan-cta">${cta}</div>
+    </div>`;
+  }).join('');
+
   view.innerHTML = `
     <div class="page-head">
       <div>
-        <h1>Billing & subscription</h1>
-        <p class="lede">${esc(summary.amountLabel || 'Monthly subscription')} · ${esc(summary.email)}</p>
+        <h1>Billing &amp; plans</h1>
+        <p class="lede">${esc(summary.amountLabel || 'Bitpype plans')} · ${esc(summary.email)}</p>
       </div>
     </div>
-    ${checkoutFlag === 'success' ? '<div class="alert ok"><strong>Payment received.</strong> Subscription status updates when Stripe confirms via webhook.</div>' : ''}
+    ${checkoutFlag === 'success' ? '<div class="alert ok"><strong>Payment received.</strong> Plan updates when Stripe confirms via webhook.</div>' : ''}
+    ${checkoutFlag === 'credits_success' ? '<div class="alert ok"><strong>Credits payment received.</strong> Balance updates when Stripe confirms via webhook.</div>' : ''}
     ${checkoutFlag === 'cancel' ? '<div class="alert warn">Checkout canceled — no charge was made.</div>' : ''}
-    ${summary.subscriptionStatus === 'past_due' ? '<div class="alert danger"><strong>Payment failed.</strong> Update your payment method in the customer portal to avoid losing access.</div>' : ''}
-    ${requireSubscription && !summary.subscribed && !summary.isSuperAdmin ? '<div class="alert warn"><strong>Subscribe to unlock the product.</strong> Leads, websites, design, outreach and MCP stay locked until billing is active.</div>' : ''}
+    ${summary.subscriptionStatus === 'past_due' ? '<div class="alert danger"><strong>Payment failed.</strong> Update your payment method in the customer portal to avoid losing paid features.</div>' : ''}
     <div class="stats-cards">
-      <div class="stat-card"><div class="n" style="font-size:1.2rem">${esc(pretty(summary.subscriptionStatus || 'none'))}</div><div class="l">Status</div></div>
-      <div class="stat-card"><div class="n" style="font-size:1.2rem">${summary.subscribed ? 'Yes' : 'No'}</div><div class="l">Access</div></div>
+      <div class="stat-card"><div class="n" style="font-size:1.2rem">${esc(summary.planName || pretty(currentPlan))}</div><div class="l">Plan</div></div>
+      <div class="stat-card"><div class="n" style="font-size:1.2rem">${esc(pretty(summary.subscriptionStatus || (currentPlan === 'free' ? 'free' : 'none')))}</div><div class="l">Status</div></div>
+      <div class="stat-card"><div class="n" style="font-size:1.2rem">${esc(String((summary.credits && summary.credits.balance) != null ? summary.credits.balance : 0))}</div><div class="l">Credits</div></div>
       <div class="stat-card"><div class="n" style="font-size:1.05rem">${esc(fmtDate(summary.currentPeriodEnd) || '—')}</div><div class="l">Current period end</div></div>
     </div>
-    <div class="panel" style="margin-top:1rem">
-      <div class="panel-h"><h3>Subscription</h3></div>
+    <div class="tabs" id="billing-tabs" role="tablist" aria-label="Billing sections">${billTabs.map(([k, l]) =>
+      `<button type="button" role="tab" data-tab="${k}" class="${k === billingTab ? 'active' : ''}" aria-selected="${k === billingTab ? 'true' : 'false'}">${esc(l)}</button>`).join('')}</div>
+    <div class="panel" id="bill-panel-subscription"${billingTab === 'subscription' ? '' : ' hidden'}>
+      <div class="panel-h"><h3>Choose a plan</h3>
+        ${summary.hasCustomer ? '<button class="btn ghost" type="button" id="bill-portal">Manage billing</button>' : ''}
+      </div>
       <div class="panel-b">
-        <p class="hint">${summary.isSuperAdmin ? 'Super admins have full access without a paid plan.' : (summary.trialing || summary.subscriptionStatus === 'trialing' ? 'You are on a trial — subscribe before it ends to keep access.' : 'One fixed monthly payment via Stripe Checkout. Manage card and cancel in the customer portal.')}</p>
-        <div class="row actions" style="margin-top:0.75rem">
-          ${!summary.subscribed || summary.subscriptionStatus === 'canceled' || summary.subscriptionStatus === 'none'
-            ? '<button class="btn" type="button" id="bill-subscribe">Subscribe with Stripe</button>'
-            : ''}
-          ${summary.hasCustomer ? '<button class="btn ghost" type="button" id="bill-portal">Manage billing</button>' : ''}
-        </div>
+        <p class="hint">${summary.isSuperAdmin
+          ? 'Super admins have Premium entitlements without a paid Stripe plan.'
+          : 'Free includes website + inline edits. Upgrade for support cadence and included social images. Card and cancel live in the Stripe customer portal.'}</p>
+        <div class="plan-grid">${planCards || '<p class="hint">Plans unavailable</p>'}</div>
         <div class="msg" id="bill-msg"></div>
       </div>
     </div>
-    <div class="panel" style="margin-top:1rem">
+    <div class="panel" id="bill-panel-credits"${billingTab === 'credits' ? '' : ' hidden'}>
+      <div class="panel-h"><h3>Social credits</h3>
+        ${(summary.credits && summary.credits.priceConfigured && !summary.isSuperAdmin)
+          ? '<button class="btn" type="button" id="bill-buy-credits">Buy credits</button>'
+          : ''}
+      </div>
+      <div class="panel-b">
+        <p class="hint">Credits power branded social image ads and caption generation for the current workspace.
+          Premium includes images (no credit charge for images). Set pack Price ID and rates in Admin → Stripe.</p>
+        <div class="stats-cards" style="margin:12px 0">
+          <div class="stat-card"><div class="n" style="font-size:1.2rem">${esc(String((summary.credits && summary.credits.balance) != null ? summary.credits.balance : 0))}</div><div class="l">Balance</div></div>
+          <div class="stat-card"><div class="n" style="font-size:1.05rem">${esc((summary.credits && summary.credits.packLabel) || '—')}</div><div class="l">Pack</div></div>
+          <div class="stat-card"><div class="n" style="font-size:1.2rem">${esc(String((summary.credits && summary.credits.perSocialImage) != null ? summary.credits.perSocialImage : 1))}</div><div class="l">Per image</div></div>
+          <div class="stat-card"><div class="n" style="font-size:1.2rem">${esc(String((summary.credits && summary.credits.perSocialContent) != null ? summary.credits.perSocialContent : 1))}</div><div class="l">Per content gen</div></div>
+        </div>
+        ${!(summary.credits && summary.credits.priceConfigured)
+          ? '<p class="msg warn">Credits checkout is not configured yet (missing <span class="mono">stripe.price_id_credits</span>).</p>'
+          : ''}
+        <div class="msg" id="bill-credits-msg"></div>
+        <table><thead><tr><th>When</th><th>Change</th><th>Balance</th><th>Reason</th></tr></thead>
+        <tbody>
+          ${((summary.credits && summary.credits.recent) || []).map((r) => `<tr>
+            <td>${esc(fmtDate(r.created_at))}</td>
+            <td>${Number(r.delta) > 0 ? '+' : ''}${esc(String(r.delta))}</td>
+            <td>${esc(String(r.balance_after))}</td>
+            <td>${esc(r.reason || '')}</td>
+          </tr>`).join('') || '<tr><td colspan="4">No credit activity yet</td></tr>'}
+        </tbody></table>
+      </div>
+    </div>
+    <div class="panel" id="bill-panel-payments"${billingTab === 'payments' ? '' : ' hidden'}>
       <div class="panel-h"><h3>Payment history</h3></div>
       <div class="panel-b">
         <table><thead><tr><th>When</th><th>Amount</th><th>Status</th><th>Description</th></tr></thead>
@@ -2990,7 +4994,7 @@ async function pageBilling(param, query) {
         </tbody></table>
       </div>
     </div>
-    <div class="panel" style="margin-top:1rem">
+    <div class="panel" id="bill-panel-account"${billingTab === 'account' ? '' : ' hidden'}>
       <div class="panel-h"><h3>Delete account</h3></div>
       <div class="panel-b">
         <p class="hint">Cancels your Stripe subscription (if any), disables login, and removes workspace memberships. Payment records are kept for the platform.</p>
@@ -2998,11 +5002,25 @@ async function pageBilling(param, query) {
       </div>
     </div>`;
 
+  $('#billing-tabs').onclick = (e) => {
+    const b = e.target.closest('[data-tab]');
+    if (!b) return;
+    window.location.hash = '#/billing/' + b.dataset.tab;
+  };
+
   const msg = $('#bill-msg');
-  const subBtn = $('#bill-subscribe');
-  if (subBtn) {
-    subBtn.onclick = () => safeRun(subBtn, async () => {
-      const r = await api.billingCheckout();
+  $$('[data-checkout-plan]').forEach((btn) => {
+    btn.onclick = () => safeRun(btn, async () => {
+      const plan = btn.getAttribute('data-checkout-plan');
+      const r = await api.billingCheckout(plan);
+      if (r.data && r.data.url) window.location.href = r.data.url;
+      else throw new Error('No checkout URL returned');
+    });
+  });
+  const buyCredits = $('#bill-buy-credits');
+  if (buyCredits) {
+    buyCredits.onclick = () => safeRun(buyCredits, async () => {
+      const r = await api.billingCreditsCheckout(1);
       if (r.data && r.data.url) window.location.href = r.data.url;
       else throw new Error('No checkout URL returned');
     });
@@ -3015,28 +5033,160 @@ async function pageBilling(param, query) {
       else throw new Error('No portal URL returned');
     });
   }
-  $('#bill-delete').onclick = async () => {
-    if (!confirm('Permanently delete your account? This cannot be undone.')) return;
-    if (prompt('Type DELETE to confirm') !== 'DELETE') return;
-    try {
-      await api.deleteAccount();
-      localStorage.removeItem('scout.workspaceId');
-      toast('Account deleted', 'ok');
-      renderAuth();
-    } catch (err) {
-      toast(err.message, 'err');
-    }
-  };
-  if (msg && !summary.priceId && !summary.isSuperAdmin) {
-    msg.textContent = 'Billing is not configured yet (missing Stripe price). Ask your admin.';
-    msg.className = 'msg error';
+  const delBtn = $('#bill-delete');
+  if (delBtn) {
+    delBtn.onclick = async () => {
+      if (!confirm('Permanently delete your account? This cannot be undone.')) return;
+      if (prompt('Type DELETE to confirm') !== 'DELETE') return;
+      try {
+        await api.deleteAccount();
+        localStorage.removeItem('scout.workspaceId');
+        toast('Account deleted', 'ok');
+        renderAuth();
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    };
+  }
+  const prices = summary.priceIds || {};
+  if (msg && !summary.isSuperAdmin && !prices.standard && !prices.premium && !summary.priceId) {
+    msg.textContent = 'Paid plans are not configured yet (missing Stripe price IDs). Ask your admin — Free still works.';
+    msg.className = 'msg warn';
   }
   requireSubscription = !!summary.requireSubscription || requireSubscription;
   userSubscribed = !!summary.subscribed;
   if (summary.productAccess != null) productAccess = !!summary.productAccess;
-  else productAccess = userSubscribed || currentUserIsSuperAdmin;
+  else productAccess = true;
   subscriptionStatus = summary.subscriptionStatus || subscriptionStatus;
   updateBillingBanner();
+}
+
+async function renderAdminUpsellTips(el) {
+  const data = (await api.adminUpsellTips()).data || {};
+  const tips = Array.isArray(data.tips) ? data.tips : [];
+  const features = Array.isArray(data.features) ? data.features : [];
+  const featureOpts = features.map((f) =>
+    `<option value="${esc(f.key)}">${esc(f.label)} → ${esc(f.minPlan)}</option>`
+  ).join('');
+
+  el.innerHTML = `
+    <div class="panel">
+      <div class="panel-h"><h3>Did you know? tips</h3></div>
+      <div class="panel-b">
+        <p class="hint">Popups shown to Free (basic) portal users for features they don’t have. Each tip has its own frequency (hours between shows per user). A 6-hour global cooldown applies between any tip. Every popup includes an Upgrade button.</p>
+        <div class="msg" id="admin-upsell-msg"></div>
+        <table>
+          <thead><tr>
+            <th>On</th><th>Title / body</th><th>Feature</th><th>Every (hrs)</th><th>Weight</th><th>Shows</th><th></th>
+          </tr></thead>
+          <tbody id="admin-upsell-rows">
+            ${tips.map((t) => `
+              <tr data-tip-id="${t.id}">
+                <td><input type="checkbox" data-tip-enabled ${t.enabled ? 'checked' : ''} title="Enabled" /></td>
+                <td>
+                  <input type="text" data-tip-title value="${esc(t.title)}" style="width:100%;margin-bottom:4px" />
+                  <textarea data-tip-body rows="2" style="width:100%">${esc(t.body)}</textarea>
+                </td>
+                <td>
+                  <select data-tip-feature style="max-width:11rem">
+                    <option value="">(general)</option>
+                    ${features.map((f) =>
+                      `<option value="${esc(f.key)}" ${t.feature_key === f.key ? 'selected' : ''}>${esc(f.label)}</option>`
+                    ).join('')}
+                  </select>
+                  <div class="hint" style="margin-top:4px">Plans: ${esc((t.target_plans || ['free']).join(', '))}</div>
+                </td>
+                <td><input type="number" data-tip-freq min="1" max="8760" value="${esc(t.frequency_hours)}" style="width:4.5rem" /></td>
+                <td><input type="number" data-tip-weight min="1" max="100" value="${esc(t.weight)}" style="width:3.5rem" title="Relative how often among eligible tips" /></td>
+                <td class="hint">${esc((t.stats && t.stats.shows) || 0)} <span title="unique viewers">/ ${esc((t.stats && t.stats.viewers) || 0)}</span></td>
+                <td class="row actions" style="gap:4px">
+                  <button type="button" class="btn soft small" data-tip-save>Save</button>
+                  <button type="button" class="btn ghost small" data-tip-del>Delete</button>
+                </td>
+              </tr>`).join('') || '<tr><td colspan="7" class="hint">No tips yet — add one below.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:1rem">
+      <div class="panel-h"><h3>Add tip</h3></div>
+      <div class="panel-b">
+        <form id="admin-upsell-add" class="stack">
+          <div><label>Title</label><input name="title" required value="Did you know?" maxlength="200" /></div>
+          <div><label>Body</label><textarea name="body" required rows="3" maxlength="2000" placeholder="Short upsell copy…"></textarea></div>
+          <div class="row" style="gap:12px;flex-wrap:wrap">
+            <div><label>Feature (skip if they already have it)</label>
+              <select name="feature_key"><option value="">(general)</option>${featureOpts}</select></div>
+            <div><label>Frequency (hours)</label><input name="frequency_hours" type="number" min="1" value="72" /></div>
+            <div><label>Weight</label><input name="weight" type="number" min="1" value="1" /></div>
+            <div><label>CTA label</label><input name="cta_label" value="Upgrade" maxlength="80" /></div>
+          </div>
+          <input type="hidden" name="target_plans" value="free" />
+          <button type="submit" class="btn primary">Add tip</button>
+        </form>
+      </div>
+    </div>`;
+
+  const msg = $('#admin-upsell-msg');
+  const flash = (text, ok) => {
+    if (!msg) return;
+    msg.textContent = text || '';
+    msg.className = ok ? 'msg ok' : (text ? 'msg err' : 'msg');
+  };
+
+  const rows = $('#admin-upsell-rows');
+  if (rows) {
+    rows.onclick = (e) => {
+      const tr = e.target.closest('tr[data-tip-id]');
+      if (!tr) return;
+      const id = Number(tr.getAttribute('data-tip-id'));
+      if (e.target.closest('[data-tip-save]')) {
+        safeRun(msg, async () => {
+          await api.adminUpsellTipUpdate(id, {
+            title: tr.querySelector('[data-tip-title]').value,
+            body: tr.querySelector('[data-tip-body]').value,
+            feature_key: tr.querySelector('[data-tip-feature]').value,
+            enabled: tr.querySelector('[data-tip-enabled]').checked,
+            frequency_hours: Number(tr.querySelector('[data-tip-freq]').value) || 72,
+            weight: Number(tr.querySelector('[data-tip-weight]').value) || 1,
+            target_plans: 'free',
+          });
+          flash('Saved.', true);
+          await renderAdminUpsellTips(el);
+        });
+      }
+      if (e.target.closest('[data-tip-del]')) {
+        if (!confirm('Delete this tip?')) return;
+        safeRun(msg, async () => {
+          await api.adminUpsellTipDelete(id);
+          flash('Deleted.', true);
+          await renderAdminUpsellTips(el);
+        });
+      }
+    };
+  }
+
+  const form = $('#admin-upsell-add');
+  if (form) {
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      safeRun(msg, async () => {
+        await api.adminUpsellTipCreate({
+          title: fd.get('title'),
+          body: fd.get('body'),
+          feature_key: fd.get('feature_key'),
+          frequency_hours: Number(fd.get('frequency_hours')) || 72,
+          weight: Number(fd.get('weight')) || 1,
+          cta_label: fd.get('cta_label') || 'Upgrade',
+          target_plans: 'free',
+          enabled: true,
+        });
+        flash('Tip added.', true);
+        await renderAdminUpsellTips(el);
+      });
+    };
+  }
 }
 
 async function renderAdminAudit(el) {
@@ -3059,9 +5209,9 @@ async function renderAdminAudit(el) {
 }
 
 const PAGES = {
-  dashboard: pageDashboard, leads: pageLeads, websites: pageWebsites, design: pageDesign,
-  outreach: pageOutreach, pipeline: pagePipeline, jobs: pageJobs, mcp: pageMcp, settings: pageSettings,
-  billing: pageBilling, admin: pageAdmin,
+  dashboard: pageDashboard, leads: pageLeads, websites: pageWebsites, domains: pageDomains, design: pageDesign,
+  social: pageSocial, outreach: pageOutreach, pipeline: pagePipeline, jobs: pageJobs, mcp: pageMcp,
+  settings: pageSettings, billing: pageBilling, admin: pageAdmin,
 };
 
 async function navigate() {
@@ -3069,6 +5219,25 @@ async function navigate() {
   Array.from(overlays).forEach((o) => o.close());
   let { route, param, query } = parseHash();
 
+  if (!signedIn) {
+    if (!PUBLIC_ROUTES.has(route)) return goToLogin();
+    return renderAuth();
+  }
+  if (route === 'login' || route === 'register') {
+    const next = consumeReturnHash();
+    if (window.location.hash !== next) {
+      history.replaceState(null, '', window.location.pathname + window.location.search + next);
+    }
+    ({ route, param, query } = parseHash());
+    if (PUBLIC_ROUTES.has(route) || !PAGES[route]) {
+      route = 'dashboard';
+      param = '';
+      query = {};
+      if (window.location.hash !== '#/dashboard') {
+        history.replaceState(null, '', window.location.pathname + window.location.search + '#/dashboard');
+      }
+    }
+  }
   if (route === 'forgot' || route === 'reset') {
     return renderAuth();
   }
@@ -3102,7 +5271,8 @@ async function navigate() {
   topTitle.textContent = ROUTE_LABELS[route] || '';
   view.onclick = null;
   view.onchange = null;
-  view.classList.toggle('wide', route === 'pipeline');
+  // Pipeline + Design/Website detail need the full main column (preview panes).
+  view.classList.toggle('wide', route === 'pipeline' || ((route === 'design' || route === 'websites') && !!param));
   leadsReload = null;
 
   if (!PAGES[route]) {
@@ -3120,7 +5290,7 @@ async function navigate() {
     const main = $('.app-main');
     if (main) main.scrollTop = 0;
   } catch (err) {
-    if (err.status === 401) return renderAuth();
+    if (isAuthRequired(err)) return goToLogin();
     if (err.status === 402) {
       window.location.hash = '#/billing';
       return;
@@ -3149,14 +5319,14 @@ if (logoutBtn) {
   logoutBtn.addEventListener('click', async () => {
     try { await api.logout(); } catch { /* ignore */ }
     localStorage.removeItem('scout.workspaceId');
-    renderAuth();
+    goToLogin({ forgetReturn: true });
   });
 }
 
 if (autoEl) {
   autoEl.addEventListener('click', (e) => {
     e.preventDefault();
-    if (e.shiftKey || e.ctrlKey || e.metaKey) { window.location.hash = '#/settings'; return; }
+    if (e.shiftKey || e.ctrlKey || e.metaKey) { window.location.hash = '#/settings/automation'; return; }
     const next = !automationPaused;
     if (!window.confirm(next ? 'Pause all automation (discovery, jobs, outreach, AI)?' : 'Resume automation?')) return;
     safeRun(null, async () => {
@@ -3176,20 +5346,32 @@ if (sidebarBackdrop) sidebarBackdrop.addEventListener('click', closeNav);
 window.addEventListener('hashchange', navigate);
 
 (async function init() {
+  if (typeof api.setOnAuthRequired === 'function') api.setOnAuthRequired(() => goToLogin());
   const { route } = parseHash();
-  if (route === 'forgot' || route === 'reset') {
-    try {
-      await api.me();
-      // Already signed in — still allow password reset UI if they hit the link.
-    } catch { /* expected when logged out */ }
-    return renderAuth();
-  }
   try {
     const me = await api.me();
+    signedIn = true;
     if (me.data.workspaceId) api.setWorkspaceId(me.data.workspaceId);
     else if (api.getWorkspaceId()) await api.selectWorkspace(api.getWorkspaceId());
+    if (route === 'forgot' || route === 'reset') return renderAuth();
     await bootApp(me.data);
-  } catch {
+  } catch (err) {
+    signedIn = false;
+    // AUTH_REQUIRED → login page. Other failures keep the session cookie;
+    // tell the user to retry instead of implying they were signed out.
+    if (isAuthRequired(err)) {
+      goToLogin();
+      return;
+    }
     renderAuth();
+    if (err && err.status === 403) {
+      toast(err.message || 'Account unavailable', 'err');
+      return;
+    }
+    if (err && err.status >= 500) {
+      toast('Server temporarily unavailable — refresh in a moment.', 'err');
+      return;
+    }
+    toast((err && err.message) || 'Could not restore session — try refreshing.', 'err');
   }
 })();

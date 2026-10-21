@@ -1,0 +1,58 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const Database = require('better-sqlite3');
+const quality = require('../src/siteContentQuality');
+const engine = require('../src/websiteEngine');
+const clone = value => JSON.parse(JSON.stringify(value));
+const hero = '<section><h1>The lights go out. <span>We show up.</span></h1><p>Intentional hero copy.</p></section>';
+const services = '<section><h2>What we get called for</h2><p>Intentional service content.</p></section>';
+const clean = [{ slug: 'index', title: 'Home', sections: [{ type: 'nav', content: { html: '<header><nav><a href="index.html">Home</a></nav></header>' } }, { type: 'html', content: { html: hero } }, { type: 'html', content: { html: services } }] }];
+const duplicated = clone(clean); duplicated[0].sections[0].content.html += hero + services;
+assert(quality.inspect(duplicated).some(issue => issue.code === 'NAV_CONTAINS_PAGE_BODY'));
+assert.throws(() => quality.assertNoNewDefects(duplicated), error => error.code === 'INVALID_GENERATED_CONTENT');
+assert.deepEqual(quality.inspect(clean), []);
+assert.throws(() => quality.assertNoNewDefects(clean, [], { partials: { headerHtml: hero + services } }), error => error.issues.some(issue => issue.code === 'SHARED_HEADER_CONTAINS_PAGE_BODY'));
+const responsive = clone(clean); responsive[0].sections.push(clone(responsive[0].sections[1]));
+assert.doesNotThrow(() => quality.assertNoNewDefects(responsive), 'Do not indiscriminately deduplicate intentional body variants');
+const punctuation = [{ slug: 'about', sections: [{ type: 'text_image', content: { heading: 'Service didn2019t end with the uniform.', body: 'That2019s our commitment; it isn2019t a slogan.' } }] }];
+assert.equal(quality.inspect(punctuation).reduce((n,row) => n+row.count,0), 3);
+assert.throws(() => quality.assertNoNewDefects(punctuation), error => error.status === 422);
+const correct = [{ slug: 'about', sections: [{ type: 'text', content: { body: 'Service didn\u2019t end with the uniform. We served in 2014 and 2019\u2014still serving.' } }] }];
+assert.deepEqual(quality.inspect(JSON.parse(JSON.stringify(correct))), []);
+assert.deepEqual(quality.inspect([{slug:'code',html:'<script>const x="didn2019t";</script><style>.didn2019t{color:red}</style><pre><code>That2019s</code></pre><a href="/didn2019t">A link</a>'}]), []);
+assert.doesNotThrow(() => quality.assertNoNewDefects(punctuation, punctuation), 'Unchanged historical defects do not block unrelated edits');
+const worse = clone(punctuation); worse[0].sections[0].content.body += ' It wasn2019t corrected.';
+assert.throws(() => quality.assertNoNewDefects(worse, punctuation));
+const db = new Database(':memory:');
+try {
+ db.exec(fs.readFileSync(path.join(__dirname,'../src/schema.sql'),'utf8'));
+ db.exec("INSERT INTO leads(id,business_name) VALUES(7,'Synthetic business')");
+ engine.ensureTables(db);
+ const siteId = Number(db.prepare("INSERT INTO websites(lead_id,name,pages,theme) VALUES(7,'Synthetic',?,'{}')").run(JSON.stringify(clean)).lastInsertRowid);
+ const before = db.prepare('SELECT pages,theme FROM websites WHERE id=?').get(siteId);
+ assert.throws(() => engine.saveSite(db,siteId,duplicated,{},'Reject invalid chrome'),error=>error.code==='INVALID_GENERATED_CONTENT');
+ assert.throws(() => engine.saveSite(db,siteId,punctuation,{},'Reject broken punctuation'),error=>error.code==='INVALID_GENERATED_CONTENT');
+ assert.deepEqual(db.prepare('SELECT pages,theme FROM websites WHERE id=?').get(siteId),before);
+ assert.equal(db.prepare('SELECT count(*) n FROM website_versions WHERE website_id=?').get(siteId).n,0);
+ engine.saveSite(db,siteId,correct,{},'Preserve Unicode');
+ assert(db.prepare('SELECT pages FROM websites WHERE id=?').get(siteId).pages.includes('\u2019'));
+ assert.equal(db.prepare('SELECT count(*) n FROM website_versions WHERE website_id=?').get(siteId).n,1);
+ db.prepare('UPDATE websites SET pages=? WHERE id=?').run(JSON.stringify(clean),siteId);
+ const domain=require('../server/domain'), portal=require('../server/clientPortal');
+ const originalWithDb=domain.withDb,originalSave=domain.sitesSave;
+ domain.withDb=(_workspace,fn)=>fn(db);
+ domain.sitesSave=(_workspace,id,payload)=>({version:engine.saveSite(db,id,payload.pages,payload.theme,payload.note)});
+ try {
+  const beforePortal=db.prepare('SELECT pages FROM websites WHERE id=?').get(siteId).pages;
+  assert.throws(()=>portal.saveClientPageHtml(1,7,{pageIndex:0,html:hero+services}),error=>error.code==='SECTION_CONTEXT_REQUIRED');
+  assert.throws(()=>portal.saveClientPageHtml(1,7,{pageIndex:0,sectionIndex:999,html:hero}),error=>error.code==='NOT_FREEFORM');
+  assert.equal(db.prepare('SELECT pages FROM websites WHERE id=?').get(siteId).pages,beforePortal);
+  portal.saveClientPageHtml(1,7,{pageIndex:0,sectionIndex:1,html:hero.replace('Intentional hero','Updated hero')});
+  const afterPortal=JSON.parse(db.prepare('SELECT pages FROM websites WHERE id=?').get(siteId).pages);
+  assert.deepEqual(afterPortal[0].sections[0],clean[0].sections[0]);
+  assert(afterPortal[0].sections[1].content.html.includes('Updated hero'));
+ } finally {domain.withDb=originalWithDb;domain.sitesSave=originalSave;}
+} finally { db.close(); }
+console.log(JSON.stringify({passed:true,syntheticOnly:true,checks:['navigation cannot contain duplicated body content','intentional body variants retained','malformed punctuation blocked before writes','Unicode and legitimate years preserved','scripts/styles/code/URLs excluded','historical issues do not block unrelated edits','rejected writes preserve content and version count']}));

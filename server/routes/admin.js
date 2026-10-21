@@ -49,8 +49,21 @@ router.post('/users', async (req, res) => {
 });
 router.patch('/users/:id', async (req, res) => {
   try {
-    const data = await admin.updateUser(Number(req.params.id), req.body || {});
+    const data = await admin.updateUser(Number(req.params.id), req.body || {}, {
+      actorUserId: req.session.userId,
+    });
     await platform.audit(req.session.userId, 'user.update', `userId=${req.params.id} ${JSON.stringify(Object.keys(req.body || {}))}`);
+    ok(res, data);
+  } catch (e) {
+    fail(res, e, e.code === 'EMAIL_IN_USE' ? 409 : 400);
+  }
+});
+router.delete('/users/:id', async (req, res) => {
+  try {
+    const data = await admin.deleteUser(Number(req.params.id), {
+      actorUserId: req.session.userId,
+    });
+    await platform.audit(req.session.userId, 'user.delete', `userId=${req.params.id}`);
     ok(res, data);
   } catch (e) { fail(res, e); }
 });
@@ -115,6 +128,7 @@ router.get('/settings', async (req, res) => {
 router.put('/settings', async (req, res) => {
   try {
     const result = await platform.setPlatformSettingsBatch(req.body && req.body.settings ? req.body.settings : req.body);
+    try { await platform.savePlatformDefaultsSnapshot(); } catch (e) { console.warn('[admin] defaults snapshot', e.message); }
     await platform.audit(req.session.userId, 'platform.settings', `updated=${(result.updated || []).join(',')}`);
     ok(res, result);
   } catch (e) { fail(res, e); }
@@ -128,6 +142,7 @@ router.put('/settings/secret', async (req, res) => {
     }
     if (!value || value === '***') return fail(res, new Error('value required'));
     await platform.setPlatformSetting(key, value);
+    try { await platform.savePlatformDefaultsSnapshot(); } catch (e) { console.warn('[admin] defaults snapshot', e.message); }
     await platform.audit(req.session.userId, 'platform.secret', `key=${key}`);
     ok(res, { key, set: true });
   } catch (e) { fail(res, e); }
@@ -162,6 +177,41 @@ router.post('/payments/:id/refund', async (req, res) => {
     const result = await billing.adminRefundPayment(Number(req.params.id), req.body || {});
     await platform.audit(req.session.userId, 'payment.refund', `paymentId=${req.params.id} ${JSON.stringify(result)}`);
     ok(res, result);
+  } catch (e) { fail(res, e); }
+});
+
+// ---------- Upsell / Did you know tips ----------
+router.get('/upsell-tips', async (req, res) => {
+  try {
+    const tips = require('../upsellTips');
+    ok(res, {
+      tips: await tips.listTips({ includeStats: true }),
+      features: tips.FEATURE_OPTIONS,
+    });
+  } catch (e) { fail(res, e, 500); }
+});
+router.post('/upsell-tips', async (req, res) => {
+  try {
+    const tips = require('../upsellTips');
+    const tip = await tips.createTip(req.body || {});
+    await platform.audit(req.session.userId, 'upsell_tip.create', `id=${tip.id}`);
+    ok(res, { tip });
+  } catch (e) { fail(res, e); }
+});
+router.patch('/upsell-tips/:id', async (req, res) => {
+  try {
+    const tips = require('../upsellTips');
+    const tip = await tips.updateTip(Number(req.params.id), req.body || {});
+    await platform.audit(req.session.userId, 'upsell_tip.update', `id=${req.params.id}`);
+    ok(res, { tip });
+  } catch (e) { fail(res, e); }
+});
+router.delete('/upsell-tips/:id', async (req, res) => {
+  try {
+    const tips = require('../upsellTips');
+    const data = await tips.deleteTip(Number(req.params.id));
+    await platform.audit(req.session.userId, 'upsell_tip.delete', `id=${req.params.id}`);
+    ok(res, data);
   } catch (e) { fail(res, e); }
 });
 

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>Claim your website — BitPype</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      font-family: Georgia, "Times New Roman", serif;
+      background: linear-gradient(165deg, #f3f7f5 0%, #e4ece8 45%, #d7e3dc 100%);
+      color: #1a2420;
+      padding: 1.25rem;
+    }
+    main {
+      width: min(28rem, 100%);
+      padding: 2rem 1.75rem;
+      background: rgba(255,255,255,0.9);
+      border: 1px solid rgba(11,84,66,0.12);
+      box-shadow: 0 12px 40px rgba(20,40,30,0.08);
+    }
+    .brand { font-size: 0.75rem; letter-spacing: 0.14em; text-transform: uppercase; color: #0b5442; margin: 0 0 1rem; }
+    h1 { font-size: 1.45rem; line-height: 1.25; margin: 0 0 0.65rem; font-weight: 600; }
+    .lede { margin: 0 0 1.35rem; line-height: 1.55; color: #33443d; font-size: 1.02rem; }
+    .actions { display: flex; flex-direction: column; gap: 0.65rem; }
+    button {
+      font: inherit; font-size: 1.02rem; padding: 0.85rem 1rem; border-radius: 0;
+      cursor: pointer; border: 1px solid transparent; width: 100%;
+    }
+    .yes { background: #0b5442; color: #fff; }
+    .yes:hover { background: #094536; }
+    .no { background: #fff; color: #5a4a38; border-color: rgba(107,90,62,0.35); }
+    .no:hover { background: #faf7f2; }
+    .later { background: transparent; color: #5c5148; border-color: rgba(92,81,72,0.28); }
+    .later:hover { background: rgba(255,255,255,0.55); }
+    .site { margin: 0 0 1.25rem; font-size: 0.92rem; }
+    .site a { color: #0b5442; }
+    .msg { margin-top: 1rem; line-height: 1.45; color: #33443d; }
+    .msg.ok { color: #0b5442; }
+    .msg.err { color: #7a2e2e; }
+    .msg.warn { color: #6b5a3e; }
+    button:disabled { opacity: 0.55; cursor: wait; }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="brand">BitPype</p>
+    <h1 id="title">Claim your website</h1>
+    <p class="lede" id="lede">Loading…</p>
+    <p class="site" id="site" hidden></p>
+    <div class="actions" id="actions" hidden>
+      <button type="button" class="yes" id="btn-yes">Yes I'm interested</button>
+      <button type="button" class="no" id="btn-no">No - Delete it</button>
+      <button type="button" class="later" id="btn-later">Maybe later</button>
+    </div>
+    <p class="msg" id="msg"></p>
+  </main>
+  <script>
+    (function () {
+      const params = new URLSearchParams(location.search);
+      const token = params.get('t') || params.get('token') || '';
+      const title = document.getElementById('title');
+      const lede = document.getElementById('lede');
+      const siteEl = document.getElementById('site');
+      const actions = document.getElementById('actions');
+      const msg = document.getElementById('msg');
+      const btnYes = document.getElementById('btn-yes');
+      const btnNo = document.getElementById('btn-no');
+      const btnLater = document.getElementById('btn-later');
+
+      function esc(s) {
+        return String(s == null ? '' : s)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }
+
+      function setMsg(text, tone) {
+        msg.className = 'msg' + (tone ? ' ' + tone : '');
+        msg.textContent = text || '';
+      }
+
+      function lock(on) {
+        btnYes.disabled = !!on;
+        btnNo.disabled = !!on;
+        btnLater.disabled = !!on;
+      }
+
+      async function load() {
+        if (!token) {
+          lede.textContent = 'This claim link is incomplete.';
+          setMsg('Missing token.', 'err');
+          return;
+        }
+        const res = await fetch('/api/v1/outreach/public/claim/' + encodeURIComponent(token));
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          lede.textContent = 'This link is not valid.';
+          setMsg((data && data.error) || 'Invalid or expired claim link.', 'err');
+          return;
+        }
+        const d = data.data || {};
+        const name = d.businessName || 'your business';
+        title.textContent = name;
+        lede.textContent = 'We built a website for you. Want to keep it?';
+        if (d.siteUrl) {
+          siteEl.hidden = false;
+          siteEl.innerHTML = 'Preview: <a href="' + esc(d.siteUrl) + '" target="_blank" rel="noopener">view your site</a>';
+        }
+        actions.hidden = false;
+        if (d.alreadyInterested) {
+          setMsg('You already said Yes — we have your interest on file.', 'ok');
+        } else if (d.alreadyUninterested) {
+          setMsg('You already marked Not interested. You can still change your mind below.', 'warn');
+        } else if (d.alreadyDeferred) {
+          setMsg('You chose Maybe later before — still interested?', 'warn');
+        }
+      }
+
+      async function decide(action) {
+        setMsg('Saving…');
+        lock(true);
+        try {
+          const res = await fetch('/api/v1/outreach/public/claim/' + encodeURIComponent(token), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.ok) {
+            setMsg((data && data.error) || 'Could not save your choice.', 'err');
+            lock(false);
+            return;
+          }
+          const d = data.data || {};
+          if (d.action === 'interested') {
+            title.textContent = 'Thank you!';
+            lede.textContent = d.businessName
+              ? ('We received your interest for ' + d.businessName + '.')
+              : 'We received your interest.';
+            actions.hidden = true;
+            setMsg('Someone from BitPype will reach out soon to complete the project.', 'ok');
+          } else if (d.action === 'uninterested') {
+            title.textContent = 'Got it';
+            lede.textContent = 'Thanks for letting us know.';
+            actions.hidden = true;
+            setMsg('We will take this preview down and will not follow up about this project.', 'warn');
+          } else {
+            title.textContent = 'Maybe later';
+            lede.textContent = 'No rush — we will keep the preview available.';
+            actions.hidden = true;
+            setMsg('We noted that you want more time. You can reopen this link anytime.', 'ok');
+          }
+        } catch (e) {
+          setMsg(e.message || 'Network error', 'err');
+          lock(false);
+        }
+      }
+
+      btnYes.addEventListener('click', () => decide('interested'));
+      btnNo.addEventListener('click', () => decide('uninterested'));
+      btnLater.addEventListener('click', () => decide('later'));
+      load().catch((e) => {
+        lede.textContent = 'Something went wrong.';
+        setMsg(e.message || String(e), 'err');
+      });
+    })();
+  </script>
+</body>
+</html>

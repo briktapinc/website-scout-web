@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Project feedback</title>
+  <style>
+    :root { --bg: #f6f3ee; --ink: #1c1917; --muted: #78716c; --line: #e7e5e4; --ok: #166534; --err: #991b1b; --accent: #0f766e; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: linear-gradient(160deg, #f6f3ee, #e7e5e4 45%, #fafaf9); color: var(--ink); min-height: 100vh; }
+    main { max-width: 640px; margin: 0 auto; padding: 28px 18px 64px; }
+    h1 { font-size: 1.45rem; margin: 0 0 6px; }
+    .lede { color: var(--muted); margin: 0 0 18px; line-height: 1.45; }
+    .card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 0 0 14px; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin: 0 0 6px; }
+    input, textarea, select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font: inherit; }
+    textarea { min-height: 120px; resize: vertical; }
+    .field { margin: 0 0 14px; }
+    .q { margin: 0 0 16px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+    .q:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
+    .q .prompt { margin: 0 0 8px; line-height: 1.4; }
+    button { border: 0; border-radius: 8px; padding: 11px 16px; font-weight: 600; cursor: pointer; background: var(--accent); color: #fff; }
+    button:disabled { opacity: 0.55; cursor: wait; }
+    .msg { margin-top: 14px; }
+    .msg.ok { color: var(--ok); }
+    .msg.err { color: var(--err); }
+    .hint { font-size: 0.85rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1 id="title">Project feedback</h1>
+    <p class="lede" id="lede">Loading…</p>
+    <form id="form" class="card" hidden>
+      <div id="questions"></div>
+      <div class="field">
+        <label for="kind">What do you need?</label>
+        <select id="kind" name="kind">
+          <option value="improvements">Small changes / polish</option>
+          <option value="redesign">Bigger redesign</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="message">Change request <span class="hint">(optional if you only answer questions)</span></label>
+        <textarea id="message" name="message" placeholder="Describe what you’d like changed…"></textarea>
+      </div>
+      <div class="field">
+        <label for="email">Your email <span class="hint">(optional)</span></label>
+        <input id="email" name="email" type="email" autocomplete="email" placeholder="you@business.com" />
+      </div>
+      <div id="captcha" class="field" style="margin:12px 0"></div>
+      <button type="submit" id="submit">Submit</button>
+      <p class="msg" id="msg"></p>
+    </form>
+  </main>
+  <script src="/js/captcha.js"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const token = params.get('token') || '';
+    const w = params.get('w') || '';
+    const form = document.getElementById('form');
+    const msg = document.getElementById('msg');
+    const questionsEl = document.getElementById('questions');
+    let captcha = { enabled: false, getToken: async () => '', reset: () => {} };
+
+    function esc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async function load() {
+      if (!token || !w) {
+        document.getElementById('lede').textContent = 'This link is incomplete. Ask your designer for a fresh form link.';
+        return;
+      }
+      const res = await fetch(`/api/v1/design/public/form/${encodeURIComponent(token)}?w=${encodeURIComponent(w)}`);
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error((data && data.error) || 'Could not load form');
+      const d = data.data;
+      const name = (d.lead && d.lead.business_name) || d.job.title;
+      document.getElementById('title').textContent = name;
+      document.getElementById('lede').textContent =
+        `Job #${d.job.id} · ${d.job.type} · ${d.job.status}` +
+        (d.pending_questions && d.pending_questions.length
+          ? ` · ${d.pending_questions.length} question(s) to answer`
+          : ' · submit a change request below');
+
+      if (d.pending_questions && d.pending_questions.length) {
+        questionsEl.innerHTML = `<h2 style="font-size:1.05rem;margin:0 0 12px">Questions</h2>` +
+          d.pending_questions.map((q, i) => `
+            <div class="q">
+              <p class="prompt"><strong>${i + 1}.</strong> ${esc(q.question)}</p>
+              <textarea class="ans" data-qid="${esc(q.id)}" placeholder="Your answer…"></textarea>
+            </div>`).join('');
+      } else {
+        questionsEl.innerHTML = '';
+      }
+      form.hidden = false;
+      try {
+        if (window.ScoutCaptcha) captcha = await window.ScoutCaptcha.mount(document.getElementById('captcha'));
+      } catch (err) { console.warn(err); }
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      msg.className = 'msg';
+      msg.textContent = 'Submitting…';
+      document.getElementById('submit').disabled = true;
+      try {
+        const answers = {};
+        document.querySelectorAll('.ans').forEach((el) => {
+          const v = el.value.trim();
+          if (v) answers[el.dataset.qid] = v;
+        });
+        const captchaToken = await captcha.getToken();
+        const body = {
+          w: Number(w),
+          kind: document.getElementById('kind').value,
+          message: document.getElementById('message').value.trim(),
+          email: document.getElementById('email').value.trim(),
+          answers,
+          captchaToken,
+        };
+        const res = await fetch(`/api/v1/design/public/form/${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error((data && data.error) || 'Submit failed');
+        msg.className = 'msg ok';
+        const bits = [];
+        if (data.data.answered) bits.push(`${data.data.answered} answer(s) saved`);
+        if (data.data.changeQueued) bits.push('change request queued');
+        msg.textContent = `Thanks — ${bits.join(' · ') || 'submitted'}. We’ll take it from here.`;
+        form.querySelectorAll('textarea, select, input, button').forEach((el) => { el.disabled = true; });
+      } catch (err) {
+        msg.className = 'msg err';
+        msg.textContent = err.message || 'Something went wrong';
+        document.getElementById('submit').disabled = false;
+        try { captcha.reset && captcha.reset(); } catch { /* ignore */ }
+      }
+    });
+
+    load().catch((e) => {
+      document.getElementById('lede').textContent = e.message;
+    });
+  </script>
+</body>
+</html>

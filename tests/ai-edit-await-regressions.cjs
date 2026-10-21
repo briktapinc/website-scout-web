@@ -1,0 +1,14 @@
+'use strict';
+const fs=require('fs'),vm=require('vm'),path=require('path'),assert=require('assert/strict');
+const root=path.join(__dirname,'..'),source=fs.readFileSync(path.join(root,'server/clientMcp.js'),'utf8');
+const portalSource=fs.readFileSync(path.join(root,'server/clientPortal.js'),'utf8');const start=portalSource.indexOf('async function applyClientTextEdits('),end=portalSource.indexOf('const LIST_ITEM_MAX',start);
+const rm={exports:{}};let writes=0;
+vm.runInNewContext(portalSource.slice(start,end)+';module.exports=applyClientTextEdits;', {module:rm,resolveClientSite:()=>({id:1,pages:[{html:'<h1>Fixture</h1>'}],theme:{}}),pagesSupportInlineEdit:()=>true,require:n=>n==='./domain'?{withDb:(_ws,fn)=>fn({prepare:()=>({get:()=>({id:7})})}),sitesSave:()=>{writes++}}:n==='../src/websiteEngine'?{}:require(n)});
+function load(edit){const m={exports:{}};vm.runInNewContext(source,{module:m,exports:m.exports,require:n=>n==='./domain'?{}:n==='./clientPortal'?{activeEmailForLead:async()=> 'fixture@example.invalid',applyClientTextEdits:edit,renderClientSite:()=>({html:'<span data-edit="html:0:1">Fixture headline</span><span data-edit="pending">Ignore</span>',pages:[]})}:n==='./billing'?{effectivePlan:async()=> 'premium'}:n==='./plans'?{getPlan:()=>({entitlements:{inlineEdits:true}})}:require(n)});return m.exports;}
+const watchdog=setTimeout(()=>{console.error('Fixture did not settle');process.exit(1)},5000);
+(async()=>{let groups=0;let api=load(rm.exports);await assert.rejects(api.dispatchPortalTool(1,'site.editText',{edits:[{id:'invalid',text:'Fixture update'}]},{leadId:7}),e=>e.code==='NO_VALID_EDITS');assert.equal(writes,0);groups++;
+ let finish;api=load(()=>new Promise(resolve=>finish=resolve));let settled=false;const pending=api.dispatchPortalTool(1,'site.editText',{edits:[{id:'html:0:1',text:'Updated'}]},{leadId:7}).then(v=>{settled=true;return v});await new Promise(resolve=>setImmediate(resolve));assert.equal(settled,false);finish({applied:1,previewUrl:'/fixture'});const saved=await pending;assert.equal(saved.applied,1);assert.equal(saved.previewUrl,'/fixture');groups++;
+ const rendered=await api.dispatchPortalTool(1,'site.render',{includeHtml:false},{leadId:7});assert.equal(rendered.html,undefined);assert.equal(rendered.textTargets.length,1);assert.equal(rendered.textTargets[0].id,'html:0:1');assert.equal(rendered.textTargets[0].text,'Fixture headline');groups++;
+ let scopedLead;api=load(async(_ws,lead)=>{scopedLead=lead;return {applied:1}});await api.dispatchPortalTool(1,'site.editText',{leadId:8,edits:[]},{leadId:7});assert.equal(scopedLead,7);groups++;
+ console.log(JSON.stringify({passed:true,groups,checks:['real invalid edit rejection awaited without writes','save completion awaited with receipt','exact editable IDs without full HTML','session lead pinned']}));
+})().catch(e=>{console.error(e);process.exitCode=1}).finally(()=>clearTimeout(watchdog));

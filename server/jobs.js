@@ -3,22 +3,31 @@
 const { query, withConnection } = require('./db');
 const { getSetting, logActivity } = require('./workspace');
 
-const JOB_TYPES = ['discovery', 'outreach_process', 'design_poll_notify', 'imap_poll', 'custom'];
+const JOB_TYPES = [
+  'discovery', 'outreach_process', 'design_poll_notify', 'imap_poll',
+  'social_weekly', 'social_publish', 'hands_off', 'hands_off_digest', 'custom',
+];
 
 function addMinutes(date, minutes) {
   return new Date(date.getTime() + minutes * 60000);
 }
 
+function dailyTime(cronExpr) {
+  if (!cronExpr || !String(cronExpr).startsWith('daily:')) return null;
+  const match = /^daily:([01]\d|2[0-3]):([0-5]\d)$/.exec(String(cronExpr));
+  if (!match) throw Object.assign(new Error('Daily schedule must be daily:HH:MM in UTC (00:00–23:59)'), { code: 'INVALID' });
+  return { hour: Number(match[1]), minute: Number(match[2]) };
+}
+
 function computeNextRun(job, from = new Date()) {
+  const time = dailyTime(job.cron_expr);
   if (job.interval_minutes && Number(job.interval_minutes) > 0) {
     return addMinutes(from, Number(job.interval_minutes));
   }
   // Simple daily HH:MM stored in cron_expr as "daily:HH:MM"
-  if (job.cron_expr && String(job.cron_expr).startsWith('daily:')) {
-    const time = String(job.cron_expr).slice(6);
-    const [hh, mm] = time.split(':').map(Number);
+  if (time) {
     const next = new Date(from);
-    next.setUTCHours(hh || 9, mm || 0, 0, 0);
+    next.setUTCHours(time.hour, time.minute, 0, 0);
     if (next <= from) next.setUTCDate(next.getUTCDate() + 1);
     return next;
   }
@@ -53,11 +62,12 @@ async function createJob(workspaceId, input) {
 
   const interval = input.interval_minutes != null ? Number(input.interval_minutes) : null;
   const cron_expr = input.cron_expr || input.cron || null;
+  dailyTime(cron_expr);
   const payload = JSON.stringify(input.payload || {});
   const enabled = input.enabled === false || input.enabled === 0 ? 0 : 1;
   const next = enabled ? toMysqlDatetime(computeNextRun({ interval_minutes: interval, cron_expr })) : null;
 
-  await query(
+  const inserted = await query(
     `INSERT INTO scheduled_jobs (
       workspace_id, name, type, cron_expr, interval_minutes, payload, enabled, next_run_at
     ) VALUES (
@@ -74,10 +84,7 @@ async function createJob(workspaceId, input) {
       next_run_at: next,
     }
   );
-  const job = (await query(
-    'SELECT * FROM scheduled_jobs WHERE workspace_id = :workspaceId ORDER BY id DESC LIMIT 1',
-    { workspaceId }
-  ))[0];
+  const job = await getJob(workspaceId, Number(inserted.insertId));
   await logActivity(workspaceId, 'jobs', `Job created #${job.id}: ${name}`);
   return job;
 }
@@ -93,6 +100,7 @@ async function updateJob(workspaceId, id, patch) {
     ? (patch.cron_expr || patch.cron)
     : job.cron_expr;
   const payload = patch.payload != null ? JSON.stringify(patch.payload) : null;
+  dailyTime(cron_expr);
 
   let next_run_at = job.next_run_at;
   if (enabled) {
@@ -154,6 +162,24 @@ async function runJobLogic(workspaceId, job) {
     return domain.imapPoll(workspaceId, payload || {});
   }
 
+  if (job.type === 'social_weekly') {
+    return domain.socialWeeklyTick(workspaceId);
+  }
+
+  if (job.type === 'social_publish') {
+    return domain.socialPublishDue(workspaceId, payload || {});
+  }
+
+  if (job.type === 'hands_off') {
+    const handsOff = require('./handsOff');
+    return handsOff.runTick(workspaceId, { force: !!(payload && payload.force) });
+  }
+
+  if (job.type === 'hands_off_digest') {
+    const handsOff = require('./handsOff');
+    return handsOff.sendDigest(workspaceId, { force: !!(payload && payload.force) });
+  }
+
   if (job.type === 'custom') {
     await logActivity(workspaceId, 'jobs', `Custom job ran: ${job.name}`);
     return { ok: true, payload };
@@ -162,19 +188,22 @@ async function runJobLogic(workspaceId, job) {
   throw new Error(`Unsupported job type: ${job.type}`);
 }
 
-async function executeJob(workspaceId, jobId, { force = false } = {}) {
+async function executeClaimedJob(workspaceId, jobId, { force = false, dueOnly = false, source = 'manual', triggeredBy = 'unknown' } = {}) {
   const job = await getJob(workspaceId, jobId);
   if (!job) throw Object.assign(new Error('NOT_FOUND'), { code: 'NOT_FOUND' });
+  const rawNext = String(job.next_run_at || '').replace(' ', 'T');
+  const nextAt = job.next_run_at instanceof Date ? job.next_run_at.getTime()
+    : Date.parse(/(?:Z|[+-]\d{2}:\d{2})$/.test(rawNext) ? rawNext : rawNext + 'Z');
+  if (dueOnly && (!job.enabled || !Number.isFinite(nextAt) || nextAt > Date.now())) return { jobId, skipped: true };
   if (!job.enabled && !force) throw Object.assign(new Error('Job is disabled'), { code: 'DISABLED' });
 
-  await query(
-    `INSERT INTO job_runs (workspace_id, job_id, status) VALUES (:workspaceId, :jobId, 'running')`,
-    { workspaceId, jobId }
+  await query(`UPDATE job_runs SET status='abandoned', error='Previous execution was interrupted; side effects may need reconciliation', finished_at=UTC_TIMESTAMP()
+    WHERE workspace_id=:workspaceId AND job_id=:jobId AND status='running'`, {workspaceId,jobId});
+  const inserted = await query(
+    `INSERT INTO job_runs (workspace_id, job_id, status, trigger_source, triggered_by) VALUES (:workspaceId, :jobId, 'running', :source, :triggeredBy)`,
+    { workspaceId, jobId, source: String(source).slice(0,40), triggeredBy: String(triggeredBy).slice(0,120) }
   );
-  const run = (await query(
-    'SELECT id FROM job_runs WHERE workspace_id = :workspaceId AND job_id = :jobId ORDER BY id DESC LIMIT 1',
-    { workspaceId, jobId }
-  ))[0];
+  const run = { id: Number(inserted.insertId) };
 
   try {
     const result = await runJobLogic(workspaceId, job);
@@ -214,6 +243,10 @@ async function executeJob(workspaceId, jobId, { force = false } = {}) {
   }
 }
 
+async function executeJob(workspaceId, jobId, opts = {}) {
+  return require('./jobExecutionLock').withJobLock(workspaceId, jobId, () => executeClaimedJob(workspaceId, jobId, opts));
+}
+
 async function tickDueJobs() {
   const due = await query(
     `SELECT id, workspace_id FROM scheduled_jobs
@@ -223,7 +256,7 @@ async function tickDueJobs() {
   const outcomes = [];
   for (const row of due) {
     try {
-      const result = await executeJob(row.workspace_id, row.id);
+      const result = await executeJob(row.workspace_id, row.id, { dueOnly: true, source: 'scheduler', triggeredBy: 'scheduler' });
       outcomes.push({ ok: true, ...result });
     } catch (e) {
       outcomes.push({ ok: false, jobId: row.id, error: e.message });

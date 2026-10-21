@@ -1,0 +1,15 @@
+'use strict';
+process.chdir('/app');
+const portal = require('/app/server/clientPortal');
+const engine = require('/app/src/websiteEngine');
+console.log('mutate', typeof portal.mutateClientListItem);
+console.log('saveHtml', typeof portal.saveClientPageHtml);
+console.log('sanitize', typeof engine.sanitizeHtml);
+const fs = require('fs');
+const ui = fs.readFileSync('/app/public/js/portal.js', 'utf8');
+const routes = fs.readFileSync('/app/server/routes/portal.js', 'utf8');
+const eng = fs.readFileSync('/app/src/websiteEngine.js', 'utf8');
+console.log('ui_list_mutate', ui.includes('list-mutate'));
+console.log('routes_list_item', routes.includes('/site/list-item'));
+console.log('engine_del', eng.includes('ws-del-item'));
+console.log('engine_ff', eng.includes('mountFreeformControls'));

@@ -2,7 +2,7 @@
 
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const { query, withConnection } = require('./db');
+const { query, withConnection, driver } = require('./db');
 const { SETTING_SEEDS, PROMPT_SEEDS } = require('./settingsKeys');
 
 function slugify(name) {
@@ -74,7 +74,7 @@ async function createUserWithWorkspace({ email, password, name, workspaceName })
 async function findUserByEmail(email) {
   const rows = await query(
     `SELECT id, email, password_hash, name, is_super_admin, status, last_login_at, created_at,
-            subscription_status, current_period_end, deleted_at, stripe_customer_id
+            subscription_status, billing_plan, current_period_end, deleted_at, stripe_customer_id
      FROM users WHERE email = :email LIMIT 1`,
     { email: String(email || '').trim().toLowerCase() }
   );
@@ -132,33 +132,63 @@ function hashToken(token) {
   return crypto.createHash('sha256').update(String(token)).digest('hex');
 }
 
-async function createWorkspaceToken(workspaceId, name = 'MCP') {
-  const raw = `ws_${crypto.randomBytes(24).toString('hex')}`;
+async function createWorkspaceToken(workspaceId, name = 'MCP', { leadId = null, expiresAt = null, oauthUserId = null } = {}) {
+  const scopedLead = leadId != null && Number.isInteger(Number(leadId)) && Number(leadId) > 0
+    ? Number(leadId)
+    : null;
+  if ((expiresAt != null || oauthUserId != null) && (!scopedLead
+    || !Number.isSafeInteger(expiresAt) || expiresAt <= Date.now()
+    || !Number.isSafeInteger(oauthUserId) || oauthUserId <= 0)) {
+    throw Object.assign(new Error('Invalid OAuth token lifetime or identity'), { code: 'INVALID' });
+  }
+  const raw = scopedLead
+    ? `cl_${crypto.randomBytes(24).toString('hex')}`
+    : `ws_${crypto.randomBytes(24).toString('hex')}`;
   const tokenHash = hashToken(raw);
   const prefix = raw.slice(0, 10);
   await query(
-    `INSERT INTO workspace_tokens (workspace_id, name, token_hash, token_prefix)
-     VALUES (:workspaceId, :name, :tokenHash, :prefix)`,
-    { workspaceId, name, tokenHash, prefix }
+    `INSERT INTO workspace_tokens (workspace_id, name, token_hash, token_prefix, lead_id, expires_at, oauth_user_id)
+     VALUES (:workspaceId, :name, :tokenHash, :prefix, :leadId, :expiresAt, :oauthUserId)`,
+    { workspaceId, name, tokenHash, prefix, leadId: scopedLead, expiresAt, oauthUserId }
   );
-  return { token: raw, prefix };
+  return { token: raw, prefix, leadId: scopedLead };
 }
+
+const tokenTouchAt = new Map(); // token_id -> last touch ms
+const TOKEN_TOUCH_MIN_MS = 5 * 60 * 1000;
 
 async function findWorkspaceByToken(rawToken) {
   const tokenHash = hashToken(rawToken);
   const rows = await query(
-    `SELECT t.id AS token_id, t.workspace_id, w.name, w.slug
+    `SELECT t.id AS token_id, t.workspace_id, t.lead_id, w.name, w.slug
      FROM workspace_tokens t
      JOIN workspaces w ON w.id = t.workspace_id
      WHERE t.token_hash = :tokenHash
+       AND (t.expires_at IS NULL OR t.expires_at > :now)
+       AND (t.oauth_user_id IS NULL OR EXISTS (
+         SELECT 1 FROM client_portal_users u WHERE u.id = t.oauth_user_id
+           AND u.workspace_id = t.workspace_id AND u.lead_id = t.lead_id AND u.status = 'active'
+       ))
      LIMIT 1`,
-    { tokenHash }
+    { tokenHash, now: Date.now() }
   );
   if (!rows[0]) return null;
-  await query(
-    'UPDATE workspace_tokens SET last_used_at = UTC_TIMESTAMP() WHERE id = :id',
-    { id: rows[0].token_id }
-  );
+  const tid = rows[0].token_id;
+  const now = Date.now();
+  const last = tokenTouchAt.get(tid) || 0;
+  if (now - last >= TOKEN_TOUCH_MIN_MS) {
+    tokenTouchAt.set(tid, now);
+    try {
+      await query(
+        driver() === 'sqlite'
+          ? "UPDATE workspace_tokens SET last_used_at = datetime('now') WHERE id = :id"
+          : 'UPDATE workspace_tokens SET last_used_at = UTC_TIMESTAMP() WHERE id = :id',
+        { id: tid }
+      );
+    } catch (e) {
+      console.warn('[workspace] last_used_at:', e.message);
+    }
+  }
   return rows[0];
 }
 

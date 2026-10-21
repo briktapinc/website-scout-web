@@ -1,4 +1,10 @@
 -- Website Scout Web — multi-tenant MySQL schema (Hostinger)
+--
+-- MySQL is the control plane: users, workspaces, memberships, billing, credits,
+-- invites, portal clients, platform settings. Product data (leads, sites, social,
+-- design jobs, workspace settings) lives in per-workspace SQLite — do not treat
+-- legacy product tables in this file (if any remain) as the runtime source of truth.
+-- Keep billing/credits/invites columns in sync with server/db.js migrate patches.
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
@@ -89,10 +95,14 @@ CREATE TABLE IF NOT EXISTS workspace_tokens (
   name VARCHAR(120) NOT NULL DEFAULT 'MCP',
   token_hash CHAR(64) NOT NULL,
   token_prefix VARCHAR(12) NOT NULL,
+  lead_id BIGINT UNSIGNED NULL,
+  expires_at BIGINT NULL,
+  oauth_user_id BIGINT UNSIGNED NULL,
   last_used_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_token_hash (token_hash),
   KEY idx_token_ws (workspace_id),
+  KEY idx_token_lead (lead_id),
   CONSTRAINT fk_token_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -196,6 +206,7 @@ CREATE TABLE IF NOT EXISTS design_jobs (
   status VARCHAR(40) NOT NULL DEFAULT 'draft',
   site_shape VARCHAR(20) NULL,
   contact_email VARCHAR(254) NULL,
+  contact_phone VARCHAR(40) NULL,
   brief JSON NULL,
   delivery JSON NULL,
   review JSON NULL,
@@ -230,11 +241,33 @@ CREATE TABLE IF NOT EXISTS websites (
   origin VARCHAR(40) NULL DEFAULT 'template',
   preview_path VARCHAR(500) NULL,
   preview_url VARCHAR(500) NULL,
+  custom_domain VARCHAR(253) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_websites_ws (workspace_id),
   KEY idx_websites_lead (workspace_id, lead_id),
   CONSTRAINT fk_websites_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS site_domains (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  website_id BIGINT UNSIGNED NULL,
+  lead_id BIGINT UNSIGNED NULL,
+  domain_name VARCHAR(253) NOT NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'pending',
+  source VARCHAR(40) NOT NULL DEFAULT 'registrar',
+  years INT NULL,
+  price VARCHAR(40) NULL,
+  currency VARCHAR(16) NULL,
+  pages_project VARCHAR(80) NULL,
+  public_url VARCHAR(500) NULL,
+  registration_state VARCHAR(40) NULL,
+  error TEXT NULL,
+  meta JSON NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_site_domains_name (domain_name),
+  KEY idx_site_domains_website (website_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS email_templates (
@@ -243,6 +276,8 @@ CREATE TABLE IF NOT EXISTS email_templates (
   name VARCHAR(200) NOT NULL,
   subject VARCHAR(500) NOT NULL,
   body MEDIUMTEXT NOT NULL,
+  sms_body TEXT NULL,
+  channel VARCHAR(20) NOT NULL DEFAULT 'email',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_templates_ws (workspace_id),
   CONSTRAINT fk_templates_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
@@ -321,6 +356,97 @@ CREATE TABLE IF NOT EXISTS activity_log (
   CONSTRAINT fk_activity_ws FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS client_portal_users (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  email VARCHAR(254) NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  lead_id BIGINT UNSIGNED NOT NULL,
+  business_name VARCHAR(200) NOT NULL DEFAULT '',
+  status VARCHAR(20) NOT NULL DEFAULT 'active',
+  last_login_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_client_portal_email (email),
+  KEY idx_client_portal_ws_lead (workspace_id, lead_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS credit_balances (
+  workspace_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+  balance INT NOT NULL DEFAULT 0,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS credit_ledger (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  workspace_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NULL,
+  delta INT NOT NULL,
+  balance_after INT NOT NULL,
+  reason VARCHAR(120) NOT NULL DEFAULT '',
+  ref_type VARCHAR(60) NULL,
+  ref_id VARCHAR(80) NULL,
+  stripe_checkout_session_id VARCHAR(120) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_credit_ledger_session (stripe_checkout_session_id),
+  KEY idx_credit_ledger_ws (workspace_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS portal_referrals (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  referrer_portal_user_id BIGINT UNSIGNED NOT NULL,
+  referrer_workspace_id BIGINT UNSIGNED NOT NULL,
+  referrer_lead_id BIGINT UNSIGNED NULL,
+  referred_name VARCHAR(160) NOT NULL DEFAULT '',
+  referred_email VARCHAR(254) NULL,
+  referred_phone VARCHAR(40) NULL,
+  referred_business_name VARCHAR(200) NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  linked_lead_id BIGINT UNSIGNED NULL,
+  linked_portal_user_id BIGINT UNSIGNED NULL,
+  linked_user_id BIGINT UNSIGNED NULL,
+  plan_id VARCHAR(40) NULL,
+  plan_amount_cents INT NULL,
+  credits_awarded INT NOT NULL DEFAULT 0,
+  credited_at DATETIME NULL,
+  stripe_subscription_id VARCHAR(120) NULL,
+  notes TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_portal_referrals_referrer (referrer_portal_user_id),
+  KEY idx_portal_referrals_ws (referrer_workspace_id),
+  KEY idx_portal_referrals_email (referred_email),
+  KEY idx_portal_referrals_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS stripe_events (
+  event_id VARCHAR(120) NOT NULL PRIMARY KEY,
+  type VARCHAR(80) NOT NULL DEFAULT '',
+  processed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_stripe_events_type (type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS mcp_oauth_auth_codes (
+  code VARCHAR(128) NOT NULL PRIMARY KEY,
+  payload_json MEDIUMTEXT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  KEY idx_mcp_oauth_codes_exp (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS mcp_oauth_refresh_tokens (
+  token_hash VARCHAR(128) NOT NULL PRIMARY KEY,
+  payload_json MEDIUMTEXT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  KEY idx_mcp_oauth_refresh_exp (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS mcp_oauth_clients (
+  client_id VARCHAR(128) NOT NULL PRIMARY KEY,
+  payload_json MEDIUMTEXT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  KEY idx_mcp_oauth_clients_exp (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS scheduled_jobs (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   workspace_id BIGINT UNSIGNED NOT NULL,
@@ -347,6 +473,8 @@ CREATE TABLE IF NOT EXISTS job_runs (
   workspace_id BIGINT UNSIGNED NOT NULL,
   job_id BIGINT UNSIGNED NOT NULL,
   status VARCHAR(40) NOT NULL,
+  trigger_source VARCHAR(40) NOT NULL DEFAULT 'legacy',
+  triggered_by VARCHAR(120) NOT NULL DEFAULT 'unknown',
   result JSON NULL,
   error TEXT NULL,
   started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

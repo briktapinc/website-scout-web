@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Contact form</title>
+  <style>
+    :root {
+      --ink: #1c140f;
+      --muted: #5c5148;
+      --line: rgba(28, 20, 15, 0.12);
+      --paper: #fffaf4;
+      --accent: #0e7a68;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      color: var(--ink);
+      background: #f4efe6;
+      min-height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <div
+    class="bitpype-form-embed bitpype-form-standalone"
+    data-bitpype-managed="1"
+    data-bitpype-form-embed=""
+    id="app"
+  ></div>
+  <script>
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var token = params.get('token') || '';
+      var el = document.getElementById('app');
+      if (el) {
+        el.setAttribute('data-bitpype-form-embed', token);
+        el.setAttribute('data-bitpype-api', location.origin);
+      }
+    })();
+  </script>
+  <script src="/js/form-embed.js?v=form1" data-bitpype-form-script="1"></script>
+</body>
+</html>

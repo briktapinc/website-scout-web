@@ -1,0 +1,1945 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bitpype Client Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,700;1,9..144,500&family=Figtree:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="icon" href="/brand/bitpype-mark.svg" type="image/svg+xml" />
+  <style>
+    :root {
+      --ink: #1c140f;
+      --muted: #5c5148;
+      --cream: #f4efe6;
+      --paper: #fffaf4;
+      --teal: #0e7a68;
+      --coral: #c44732;
+      --gold: #f0b429;
+      --line: rgba(28, 20, 15, 0.12);
+      --accent: var(--teal);
+      --ok: #0e7a68;
+      --err: #9b2c2c;
+      --glow: rgba(196, 71, 50, 0.14);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Figtree, sans-serif;
+      color: var(--ink);
+      line-height: 1.5;
+      overflow-x: clip;
+      background:
+        radial-gradient(880px 420px at 100% -8%, rgba(239, 93, 69, 0.14), transparent 58%),
+        radial-gradient(720px 380px at -12% 8%, rgba(14, 122, 104, 0.1), transparent 52%),
+        var(--cream);
+    }
+    a { color: inherit; }
+    :focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+    .wrap { position: relative; max-width: 980px; margin: 0 auto; padding: 28px 18px 72px; transition: max-width 0.25s ease; }
+    /* Website tab: full content width — preview not trapped in a narrow column */
+    .wrap.is-website-wide {
+      max-width: none;
+      width: 100%;
+      padding-left: clamp(10px, 1.2vw, 16px);
+      padding-right: clamp(10px, 1.2vw, 16px);
+    }
+    .wrap.is-website-wide #sec-preview,
+    .wrap.is-website-wide .preview-frame,
+    .wrap.is-website-wide .preview-frame iframe {
+      width: 100%;
+      max-width: none;
+    }
+    .logo {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: var(--ink);
+      font-family: Fraunces, Georgia, serif;
+      font-weight: 700;
+      font-size: 1.4rem;
+      letter-spacing: -0.03em;
+      min-width: 0;
+    }
+    .logo img { width: 36px; height: 36px; border-radius: 10px; flex: none; }
+    .kicker {
+      margin: 22px 0 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-size: 0.78rem;
+      color: var(--coral);
+    }
+    .brand {
+      font-family: Fraunces, Georgia, serif;
+      font-size: clamp(2.6rem, 5vw, 4.2rem);
+      font-weight: 500;
+      letter-spacing: -0.045em;
+      line-height: 0.96;
+      margin: 0;
+      animation: rise 0.7s ease both;
+    }
+    .brand em { font-style: italic; font-weight: 500; color: var(--coral); }
+    .tagline {
+      margin: 16px 0 0;
+      color: var(--muted);
+      font-size: 1.12rem;
+      max-width: 36ch;
+      animation: rise 0.7s ease 0.08s both;
+    }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: none; }
+    }
+    @keyframes fadein {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    /* Auth: one composition */
+    #gate {
+      min-height: calc(100vh - 56px);
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(280px, 420px);
+      align-items: center;
+      gap: 40px 64px;
+    }
+    .auth-panel {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      padding: 26px 24px 22px;
+      box-shadow: 0 28px 60px rgba(58, 32, 18, 0.1);
+      animation: rise 0.75s ease 0.14s both;
+    }
+    .tabs { display: flex; gap: 6px; margin: 0 0 16px; }
+    .tabs button {
+      flex: 1;
+      border: 1.5px solid transparent;
+      background: transparent;
+      border-radius: 999px;
+      padding: 9px 12px;
+      font: inherit;
+      font-weight: 700;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .tabs button[aria-selected="true"] {
+      background: var(--ink);
+      color: var(--paper);
+      border-color: var(--ink);
+    }
+    label { display: block; font-size: 0.86rem; font-weight: 700; margin: 0 0 6px; }
+    input, textarea, select {
+      width: 100%;
+      border: 1.5px solid rgba(28, 20, 15, 0.16);
+      border-radius: 14px;
+      padding: 11px 12px;
+      font: inherit;
+      background: var(--paper);
+      color: var(--ink);
+    }
+    /* Checkboxes/radios must not inherit width:100% — breaks flex row layouts */
+    input[type="checkbox"],
+    input[type="radio"] {
+      width: auto;
+      padding: 0;
+      border-radius: 4px;
+      flex: none;
+    }
+    input:focus, textarea:focus, select:focus {
+      outline: 3px solid var(--gold);
+      outline-offset: 2px;
+      border-color: transparent;
+    }
+    textarea { min-height: 120px; resize: vertical; }
+    .field { margin: 0 0 14px; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      min-height: 48px;
+      border: 1.5px solid transparent;
+      border-radius: 999px;
+      padding: 0 18px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      background: var(--ink);
+      color: var(--paper);
+      text-decoration: none;
+    }
+    .btn:hover { background: #2c211b; }
+    .btn:disabled { opacity: 0.55; cursor: wait; }
+    .btn.ghost {
+      background: transparent;
+      color: var(--ink);
+      border-color: rgba(28, 20, 15, 0.22);
+    }
+    .btn.ghost:hover { background: transparent; border-color: var(--ink); }
+    .btn.soft {
+      background: var(--paper);
+      color: var(--ink);
+      border-color: rgba(28, 20, 15, 0.22);
+    }
+    .btn.soft:hover { background: var(--paper); border-color: var(--ink); }
+    .auth-panel .btn[type="submit"] { width: 100%; }
+    .hint { font-size: 0.85rem; color: var(--muted); margin: 10px 0 0; line-height: 1.4; }
+    .msg { margin-top: 12px; font-size: 0.92rem; }
+    .msg.ok { color: var(--ok); }
+    .msg.err { color: var(--err); }
+    .hidden { display: none !important; }
+
+    /* App shell after login */
+    #app { animation: fadein 0.45s ease both; }
+    .topbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px 18px;
+      margin: 0 0 22px;
+      padding: 4px 0 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .topbar .who {
+      font-family: Fraunces, Georgia, serif;
+      font-weight: 500;
+      font-size: 1.7rem;
+      letter-spacing: -0.03em;
+      margin: 0;
+    }
+    .topbar .meta { color: var(--muted); font-size: 0.92rem; margin: 4px 0 0; }
+    .topbar-id { min-width: 0; flex: 1; }
+    /* Logged-in section tabs */
+    .portal-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 22px;
+      padding: 0;
+      width: 100%;
+      max-width: 100%;
+      justify-content: flex-start;
+      background: transparent;
+      border: 0;
+    }
+    .portal-nav button {
+      flex: 0 1 auto;
+      min-width: 0;
+      border: 1.5px solid transparent;
+      background: transparent;
+      border-radius: 999px;
+      padding: 8px 14px;
+      font: inherit;
+      font-weight: 700;
+      color: var(--ink);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .portal-nav button:hover { color: var(--coral); }
+    .portal-nav button[aria-selected="true"] {
+      background: var(--ink);
+      color: var(--paper);
+      border-color: var(--ink);
+    }
+    .portal-nav button[aria-selected="true"]:hover { color: var(--paper); }
+    section.block.portal-panel {
+      margin: 0 0 36px;
+      padding: 0;
+      animation: rise 0.45s ease both;
+    }
+    section.block.portal-panel[hidden] { display: none !important; }
+    section.block h2 {
+      font-family: Fraunces, Georgia, serif;
+      font-weight: 500;
+      font-size: 1.85rem;
+      margin: 0 0 6px;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+    }
+    section.block .lede { color: var(--muted); margin: 0 0 14px; max-width: 52ch; }
+    .block-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px 16px;
+      margin: 0 0 14px;
+    }
+    .block-head h2 { margin: 0 0 6px; }
+    .block-head .lede { margin: 0; }
+    .block-head .btn { flex-shrink: 0; align-self: center; text-decoration: none; }
+    .block-head .preview-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      flex-shrink: 0;
+      align-self: center;
+    }
+    .btn.edit-affordance {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .btn.edit-affordance svg { width: 15px; height: 15px; flex-shrink: 0; }
+    .btn.edit-affordance[aria-pressed="true"] {
+      background: var(--ink);
+      color: var(--paper);
+      border-color: transparent;
+    }
+    .btn.edit-affordance[aria-pressed="true"]:hover { background: #2c211b; }
+    .preview-frame {
+      position: relative;
+      width: 100%;
+      min-height: 70vh;
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      background: var(--paper);
+      overflow: hidden;
+      box-shadow: 0 28px 60px rgba(58, 32, 18, 0.1);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .preview-frame.is-edit-mode {
+      border-color: rgba(14, 122, 104, 0.55);
+      box-shadow: 0 0 0 3px rgba(240, 180, 41, 0.45), 0 28px 60px rgba(58, 32, 18, 0.1);
+    }
+    .preview-frame iframe {
+      width: 100%;
+      height: max(70vh, calc(100vh - 220px));
+      min-height: 70vh;
+      border: 0;
+      display: block;
+      background: #fff;
+    }
+    .preview-empty {
+      padding: 48px 24px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .preview-link { display: inline-block; margin-top: 10px; color: var(--teal); font-weight: 700; text-underline-offset: 3px; }
+    .preview-link:hover { color: var(--coral); }
+    .edit-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0 0 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: var(--paper);
+      box-shadow: 0 12px 28px rgba(58, 32, 18, 0.06);
+    }
+    .edit-bar[hidden] { display: none !important; }
+    .edit-bar .edit-hint {
+      margin: 0;
+      font-size: 0.9rem;
+      color: var(--ink);
+      max-width: 48ch;
+    }
+    .edit-bar .edit-hint strong { font-weight: 700; }
+    .edit-bar .edit-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    #msg-edit, #msg-publish { margin: 0 0 12px; min-height: 0; }
+    /* Above #sec-preview.is-edit-fullscreen (z-index: 1200) so ★ AI modal shows during edit. */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 1400;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      background: rgba(28, 20, 15, 0.45);
+      backdrop-filter: blur(4px);
+      animation: fadein 0.18s ease both;
+    }
+    .modal-backdrop[hidden] { display: none !important; }
+    .modal {
+      width: min(440px, 100%);
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      padding: 22px 22px 18px;
+      box-shadow: 0 28px 60px rgba(58, 32, 18, 0.18);
+    }
+    .modal h2 {
+      margin: 0 0 6px;
+      font-family: Fraunces, Georgia, serif;
+      font-weight: 500;
+      font-size: 1.7rem;
+      letter-spacing: -0.03em;
+    }
+    .modal .lede { margin: 0 0 14px; color: var(--muted); font-size: 0.92rem; }
+    .modal .field { margin: 0 0 12px; }
+    .modal .field label { display: block; font-weight: 700; margin-bottom: 6px; font-size: 0.92rem; }
+    .modal textarea {
+      width: 100%;
+      min-height: 110px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font: inherit;
+      color: var(--ink);
+      background: #fff;
+    }
+    .modal textarea:focus {
+      outline: 3px solid var(--gold);
+      outline-offset: 2px;
+      border-color: transparent;
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .logo-bar {
+      margin: 0 0 12px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: var(--paper);
+      box-shadow: 0 12px 28px rgba(58, 32, 18, 0.06);
+    }
+    .logo-bar[hidden] { display: none !important; }
+    .logo-bar-title { margin: 0 0 10px; font-size: 0.9rem; color: var(--ink); }
+    .logo-mode-row { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 10px; }
+    .logo-mode { display: inline-flex; align-items: center; gap: 6px; font-size: 0.9rem; cursor: pointer; }
+    .logo-preview-row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+    .logo-preview {
+      min-width: 140px;
+      min-height: 48px;
+      padding: 8px 12px;
+      border: 1.5px dashed rgba(28, 20, 15, 0.22);
+      border-radius: 14px;
+      background: var(--cream);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .logo-preview-text { font-family: Fraunces, Georgia, serif; font-weight: 700; color: var(--ink); }
+    .logo-preview img { max-height: 40px; width: auto; max-width: 180px; object-fit: contain; display: block; }
+    .logo-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    #msg-logo { margin: 8px 0 0; min-height: 0; }
+    .theme-bar {
+      margin: 0 0 12px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: var(--paper);
+      box-shadow: 0 12px 28px rgba(58, 32, 18, 0.06);
+    }
+    .theme-bar[hidden] { display: none !important; }
+    .structure-bar {
+      margin: 0 0 14px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--paper) 92%, var(--ink));
+    }
+    .structure-bar[hidden] { display: none !important; }
+    .structure-bar-title { margin: 0 0 10px; font-size: 0.9rem; color: var(--ink); }
+    .structure-cols {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    @media (max-width: 760px) {
+      .structure-cols { grid-template-columns: 1fr; }
+    }
+    .structure-col h3 {
+      margin: 0 0 8px;
+      font-size: 0.82rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--mut, #5c6656);
+    }
+    .structure-list { display: flex; flex-direction: column; gap: 6px; }
+    .structure-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+    .structure-row .structure-label {
+      flex: 1;
+      font-size: 0.92rem;
+      font-weight: 650;
+      color: var(--ink);
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .structure-row .structure-meta {
+      font-size: 0.75rem;
+      color: var(--mut, #5c6656);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .structure-row.pinned { opacity: 0.72; }
+    .structure-row.depth-1 {
+      margin-left: 22px;
+      border-left: 3px solid var(--line);
+    }
+    .structure-row button {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 8px;
+      width: 34px;
+      height: 34px;
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      color: var(--ink);
+    }
+    .structure-row button:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+    .structure-row button.structure-visibility.off {
+      opacity: 0.4;
+      filter: grayscale(1);
+    }
+    .structure-row.nav-hidden .structure-label {
+      opacity: 0.55;
+    }
+    .structure-row.nav-hidden .structure-meta {
+      color: var(--mut, #5c6656);
+      font-style: italic;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .structure-page-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .structure-page-tabs button {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 0.82rem;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .structure-page-tabs button.active {
+      background: var(--ink);
+      color: #fff;
+      border-color: var(--ink);
+    }
+    .structure-col-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .structure-col-head h3 { margin: 0; }
+    .structure-insert-row {
+      display: flex;
+      justify-content: center;
+      margin: -2px 0;
+    }
+    .structure-insert-row button {
+      appearance: none;
+      border: 1px dashed rgba(28, 20, 15, 0.22);
+      background: transparent;
+      border-radius: 999px;
+      min-width: 34px;
+      height: 28px;
+      padding: 0 12px;
+      font-size: 1rem;
+      line-height: 1;
+      cursor: pointer;
+      color: var(--mut, #5c6656);
+    }
+    .structure-insert-row button:hover:not(:disabled) {
+      border-color: var(--ink);
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.8);
+    }
+    .structure-insert-row button:disabled { opacity: 0.35; cursor: not-allowed; }
+    .modal.structure-module-modal { max-width: 420px; }
+    .structure-module-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 12px 0 0;
+    }
+    .structure-module-list button {
+      text-align: left;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: #fff;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .structure-module-list button:hover { border-color: var(--ink); }
+    .modal.structure-page-modal { max-width: 420px; }
+    .structure-page-modal label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 650;
+      margin: 12px 0 6px;
+    }
+    .structure-page-modal input {
+      width: 100%;
+      border-radius: 12px;
+      border: 1.5px solid rgba(28, 20, 15, 0.16);
+      padding: 10px 12px;
+      font: inherit;
+    }
+    .theme-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px 16px;
+      margin-bottom: 12px;
+    }
+    .theme-bar-title { margin: 0 0 10px; font-size: 0.9rem; color: var(--ink); }
+    .theme-fonts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px 16px;
+      margin-bottom: 12px;
+    }
+    .font-select {
+      width: 100%;
+      max-width: 280px;
+      padding: 8px 10px;
+      border: 1px solid var(--line, #e6e0d8);
+      border-radius: 14px;
+      background: var(--paper);
+      font: inherit;
+      color: var(--ink);
+    }
+    .edit-font {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 140px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--ink);
+    }
+    .edit-font .font-select { max-width: 200px; }
+    .theme-field label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: var(--ink);
+    }
+    .theme-inputs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .theme-inputs input[type="color"] {
+      width: 42px;
+      height: 36px;
+      padding: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .theme-inputs input[type="text"] {
+      flex: 1;
+      min-width: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9rem;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+    }
+    .theme-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .theme-palette-wrap { margin: 4px 0 12px; }
+    .theme-palette-label {
+      margin: 0 0 4px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--mut, #5c6656);
+    }
+    .theme-palette {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .theme-palette-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 96px;
+    }
+    .theme-palette-item .theme-inputs { gap: 6px; }
+    .theme-palette-item label {
+      font-size: 0.75rem;
+      font-weight: 650;
+      color: var(--mut, #5c6656);
+    }
+    #msg-theme { margin: 8px 0 0; min-height: 0; }
+    #sec-preview.is-edit-fullscreen .theme-bar { display: none !important; }
+
+    /* Full-screen preview / edit overlay */
+    body.is-preview-fullscreen { overflow: hidden; }
+    #sec-preview.is-edit-fullscreen {
+      position: fixed;
+      inset: 0;
+      z-index: 1200;
+      margin: 0;
+      padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+      width: 100%;
+      max-width: none;
+      height: 100%;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background:
+        radial-gradient(880px 420px at 100% -8%, rgba(239, 93, 69, 0.14), transparent 58%),
+        radial-gradient(720px 380px at -12% 8%, rgba(14, 122, 104, 0.1), transparent 52%),
+        var(--cream);
+      animation: fadein 0.2s ease both;
+      box-sizing: border-box;
+    }
+    #sec-preview.is-edit-fullscreen .block-head {
+      flex-shrink: 0;
+      gap: 8px 12px;
+      align-items: center;
+      margin: 0;
+      padding: 4px 2px 0;
+    }
+    #sec-preview.is-edit-fullscreen .block-head h2 {
+      font-size: 1.15rem;
+      margin: 0;
+    }
+    #sec-preview.is-edit-fullscreen .block-head .lede {
+      display: none;
+    }
+    #sec-preview.is-edit-fullscreen .preview-actions {
+      gap: 6px;
+    }
+    #sec-preview.is-edit-fullscreen .edit-bar {
+      flex-shrink: 0;
+      margin: 0;
+      padding: 8px 10px;
+      border-radius: 10px;
+    }
+    #sec-preview.is-edit-fullscreen .edit-bar .edit-hint {
+      font-size: 0.82rem;
+      max-width: none;
+      flex: 1 1 12rem;
+    }
+    #sec-preview.is-edit-fullscreen #msg-edit:empty { display: none; }
+    #sec-preview.is-edit-fullscreen #msg-edit {
+      flex-shrink: 0;
+      margin: 0;
+      font-size: 0.85rem;
+    }
+    #sec-preview.is-edit-fullscreen .preview-frame {
+      flex: 1 1 auto;
+      min-height: 0;
+      height: auto;
+      border-radius: 12px;
+      position: relative;
+    }
+    #sec-preview.is-edit-fullscreen .preview-frame iframe {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      max-width: none;
+    }
+    body.is-preview-fullscreen .topbar,
+    body.is-preview-fullscreen .portal-nav {
+      display: none;
+    }
+    .request-changes .panel { max-width: 640px; }
+    .btn.fs-toggle svg { width: 15px; height: 15px; flex-shrink: 0; }
+    .btn.fs-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .panel {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      padding: 20px;
+      box-shadow: 0 18px 40px rgba(58, 32, 18, 0.06);
+      min-width: 0;
+      overflow: hidden;
+    }
+    .cal-scroll {
+      width: 100%;
+      max-width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      margin: 0 0 4px;
+    }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 6px;
+      width: 100%;
+      min-width: min(100%, 560px);
+    }
+    .cal-head {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--coral);
+      font-weight: 700;
+      text-align: center;
+      padding: 4px 0;
+      min-width: 0;
+    }
+    .cal-cell {
+      min-width: 0;
+      min-height: 72px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 6px;
+      background: var(--paper);
+      font-size: 0.78rem;
+      overflow: hidden;
+    }
+    .cal-cell .d { font-weight: 700; margin-bottom: 4px; }
+    .cal-cell.muted { opacity: 0.4; }
+    .cal-cell .dot {
+      display: block;
+      max-width: 100%;
+      background: rgba(14, 122, 104, 0.12);
+      color: var(--teal);
+      border-radius: 999px;
+      padding: 3px 5px;
+      margin-top: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .post-list {
+      margin: 18px 0 0;
+      display: grid;
+      gap: 14px;
+      grid-template-columns: 1fr;
+    }
+    .post-card {
+      display: grid;
+      grid-template-columns: minmax(0, 140px) minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 14px;
+      box-shadow: 0 16px 36px rgba(58, 32, 18, 0.07);
+      animation: rise 0.45s ease both;
+    }
+    .post-media {
+      aspect-ratio: 1;
+      width: 100%;
+      border-radius: 16px;
+      overflow: hidden;
+      background: var(--cream);
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-align: center;
+      padding: 8px;
+    }
+    .post-media img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .post-body { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+    .post-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      align-items: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    .post-meta .platforms { text-transform: capitalize; }
+    .post-cap {
+      white-space: pre-wrap;
+      line-height: 1.45;
+      margin: 0;
+      font-size: 0.98rem;
+    }
+    .post-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 2px;
+    }
+    .btn.small {
+      min-height: 36px;
+      padding: 0 14px;
+      font-size: 0.86rem;
+    }
+    .pager {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .pager .info { font-size: 0.86rem; color: var(--muted); }
+    .price-hint { font-size: 0.85rem; color: var(--muted); margin: 0 0 10px; }
+    .status-pill {
+      display: inline-block;
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(14, 122, 104, 0.12);
+      color: var(--teal);
+      text-transform: capitalize;
+    }
+    .status-pill.warn { background: rgba(240, 180, 41, 0.28); color: #6a4a08; }
+    .status-pill.bad { background: rgba(155, 28, 28, 0.1); color: var(--err); }
+    .bill-alert {
+      margin: 0 0 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 0.92rem;
+      line-height: 1.4;
+    }
+    .bill-alert.ok { background: rgba(27, 94, 59, 0.1); color: var(--ok); }
+    .bill-alert.warn { background: rgba(240, 180, 41, 0.22); color: #6a4a08; }
+    .plan-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin-top: 14px;
+    }
+    .plan-card {
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      padding: 20px;
+      background: var(--paper);
+      box-shadow: 0 16px 36px rgba(58, 32, 18, 0.06);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 100%;
+    }
+    .plan-card.is-current {
+      border-color: var(--ink);
+      box-shadow: 0 0 0 1.5px var(--ink), 0 18px 40px rgba(58, 32, 18, 0.1);
+    }
+    .plan-card.is-featured {
+      background:
+        radial-gradient(180px 120px at 100% 0%, rgba(240, 180, 41, 0.35), transparent 70%),
+        var(--paper);
+    }
+    .plan-card-h {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+    }
+    .plan-card-h h3 {
+      margin: 0;
+      font-family: Fraunces, Georgia, serif;
+      font-size: 1.55rem;
+      font-weight: 500;
+      letter-spacing: -0.03em;
+    }
+    .plan-price { font-weight: 700; font-size: 0.92rem; color: var(--coral); }
+    .plan-tagline { margin: 0; font-size: 0.88rem; color: var(--muted); line-height: 1.4; }
+    .plan-features {
+      margin: 0;
+      padding-left: 1.1rem;
+      color: var(--ink);
+      font-size: 0.9rem;
+      line-height: 1.45;
+      flex: 1;
+    }
+    .plan-features li { margin: 0.2rem 0; }
+    .plan-cta { margin-top: 6px; }
+    .plan-cta .hint { font-size: 0.86rem; }
+    .plan-note {
+      margin: 10px 0 0;
+      font-size: 0.84rem;
+      color: var(--muted);
+    }
+    @media (max-width: 840px) {
+      .plan-grid { grid-template-columns: 1fr; }
+      #gate { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+    }
+    @media (max-width: 720px) {
+      .topbar .logo { order: 0; }
+      #btn-logout { order: 1; margin-left: auto; }
+      .topbar-id { order: 2; flex: 1 0 100%; }
+      .topbar .who { font-size: 1.55rem; }
+      .block-head { flex-direction: column; align-items: flex-start; }
+      .block-head .preview-actions { width: 100%; flex-shrink: 1; }
+      .portal-nav { gap: 6px; }
+      .portal-nav button { padding: 8px 12px; font-size: 0.9rem; }
+      .cal-grid { grid-template-columns: repeat(7, minmax(72px, 1fr)); min-width: 560px; }
+      .cal-head { display: block; }
+      .post-card { grid-template-columns: 1fr; }
+      .post-media { max-width: 220px; }
+      .preview-frame {
+        min-height: 60vh;
+      }
+      .preview-frame iframe {
+        height: max(60vh, calc(100vh - 260px));
+        min-height: 60vh;
+      }
+      #sec-preview.is-edit-fullscreen {
+        padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+      }
+      #sec-preview.is-edit-fullscreen .block-head h2 { font-size: 1.05rem; }
+      #sec-preview.is-edit-fullscreen .btn { padding: 9px 11px; font-size: 0.9rem; }
+      #sec-preview.is-edit-fullscreen .edit-bar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      #sec-preview.is-edit-fullscreen .edit-bar .edit-actions {
+        justify-content: flex-end;
+      }
+    }
+    .post-card:has(.post-body:only-child) { grid-template-columns: minmax(0, 1fr); }
+    .item-list {
+      display: grid;
+      gap: 12px;
+      margin-top: 4px;
+    }
+    .item-card {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 14px 16px;
+      align-items: center;
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background:
+        radial-gradient(180px 100px at 100% 0%, rgba(240, 180, 41, 0.16), transparent 70%),
+        var(--paper);
+      box-shadow: 0 14px 32px rgba(58, 32, 18, 0.06);
+      animation: rise 0.45s ease both;
+    }
+    .item-card-mark {
+      width: 10px;
+      height: 48px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, var(--coral), var(--gold));
+      flex: none;
+    }
+    .item-card-main { min-width: 0; }
+    .item-card-kicker {
+      margin: 0 0 4px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--coral);
+    }
+    .item-card-title {
+      margin: 0;
+      font-family: Fraunces, Georgia, serif;
+      font-weight: 500;
+      font-size: 1.35rem;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      color: var(--ink);
+    }
+    .item-card-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      align-items: center;
+      margin-top: 8px;
+      font-size: 0.86rem;
+      color: var(--muted);
+    }
+    .item-card-meta .sep { opacity: 0.45; }
+    .item-card-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .status-pill.draft {
+      background: rgba(28, 20, 15, 0.08);
+      color: var(--muted);
+    }
+    #forms-list-panel > .row strong,
+    #modules-items-heading {
+      font-family: Fraunces, Georgia, serif;
+      font-weight: 500;
+      font-size: 1.25rem;
+      letter-spacing: -0.02em;
+    }
+    @media (max-width: 640px) {
+      .item-card {
+        grid-template-columns: auto minmax(0, 1fr);
+      }
+      .item-card-actions {
+        grid-column: 2;
+        justify-content: flex-start;
+      }
+    }
+    #form-target-page, #modules-target-page, #form-embed-code {
+      border-radius: 14px;
+      border: 1.5px solid rgba(28, 20, 15, 0.16);
+      background: var(--paper);
+      font: inherit;
+      color: var(--ink);
+    }
+    /* Modules mini-admin */
+    .modules-admin {
+      display: grid;
+      grid-template-columns: minmax(168px, 220px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .modules-admin-side {
+      position: sticky;
+      top: 12px;
+      padding: 14px 12px;
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      box-shadow: 0 10px 28px rgba(58, 32, 18, 0.05);
+    }
+    .modules-admin-side-hint {
+      margin: 0 8px 12px;
+      font-size: 0.82rem;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+    .modules-side-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .modules-side-group {
+      margin: 10px 0 4px;
+      padding: 0 8px;
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .modules-side-group:first-child { margin-top: 0; }
+    .module-tab {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      width: 100%;
+      border: 0;
+      border-radius: 12px;
+      padding: 9px 10px;
+      font: inherit;
+      font-size: 0.92rem;
+      font-weight: 650;
+      background: transparent;
+      color: var(--ink);
+      cursor: pointer;
+      text-align: left;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .module-tab:hover { background: rgba(28, 20, 15, 0.05); }
+    .module-tab.is-active {
+      background: var(--ink);
+      color: #fff;
+    }
+    .module-tab-label { min-width: 0; }
+    .module-tab-meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex: none;
+    }
+    .module-tab-count {
+      font-size: 0.78rem;
+      font-weight: 700;
+      opacity: 0.7;
+      min-width: 1.25rem;
+      text-align: right;
+    }
+    .module-tab.is-active .module-tab-count { opacity: 0.85; }
+    .module-tab-live {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--teal);
+      box-shadow: 0 0 0 2px rgba(14, 122, 104, 0.2);
+    }
+    .module-tab.is-active .module-tab-live {
+      background: #7ddea8;
+      box-shadow: none;
+    }
+    .modules-admin-main { min-width: 0; }
+    .portal-pane-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 0 0 14px;
+      padding: 4px;
+      border-radius: 14px;
+      background: rgba(28, 20, 15, 0.05);
+      width: fit-content;
+      max-width: 100%;
+    }
+    .portal-pane-tabs[hidden],
+    #modules-pane-content[hidden],
+    #modules-pane-results[hidden],
+    #modules-booking-panel[hidden],
+    #forms-pane-setup[hidden],
+    #forms-pane-results[hidden] {
+      display: none !important;
+    }
+    .portal-pane-tab {
+      border: 0;
+      border-radius: 10px;
+      padding: 8px 14px;
+      font: inherit;
+      font-size: 0.88rem;
+      font-weight: 700;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .portal-pane-tab:hover { color: var(--ink); }
+    .portal-pane-tab.is-active {
+      background: var(--paper);
+      color: var(--ink);
+      box-shadow: 0 2px 10px rgba(58, 32, 18, 0.08);
+    }
+    @media (max-width: 760px) {
+      .modules-admin {
+        grid-template-columns: 1fr;
+      }
+      .modules-admin-side {
+        position: static;
+        padding: 12px;
+      }
+      .modules-side-nav {
+        flex-direction: row;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        gap: 6px;
+        padding-bottom: 2px;
+        -webkit-overflow-scrolling: touch;
+      }
+      .modules-side-group { display: none; }
+      .module-tab {
+        width: auto;
+        flex: none;
+        border: 1.5px solid rgba(28, 20, 15, 0.12);
+        border-radius: 999px;
+        padding: 8px 12px;
+        background: var(--cream);
+      }
+      .module-tab.is-active {
+        border-color: var(--ink);
+      }
+    }
+    .modules-embed-card {
+      margin-bottom: 16px;
+      padding: 18px 20px;
+      border-radius: 22px;
+      border: 1px solid var(--line);
+      background:
+        radial-gradient(220px 120px at 100% 0%, rgba(240, 180, 41, 0.12), transparent 70%),
+        var(--paper);
+      box-shadow: 0 14px 32px rgba(58, 32, 18, 0.06);
+    }
+    .modules-embed-card.is-on-site { border-color: rgba(27, 94, 59, 0.28); }
+    .modules-embed-head {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .modules-embed-title {
+      margin: 0;
+      font-family: Fraunces, Georgia, serif;
+      font-weight: 500;
+      font-size: 1.35rem;
+      letter-spacing: -0.02em;
+    }
+    .modules-embed-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .modules-embed-details {
+      margin: 12px 0 0;
+      font-size: 0.86rem;
+      color: var(--muted);
+    }
+    .modules-embed-details summary {
+      cursor: pointer;
+      font-weight: 650;
+      color: var(--ink);
+    }
+    .modules-embed-details code {
+      display: block;
+      margin-top: 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--cream);
+      word-break: break-all;
+      font-size: 0.82rem;
+    }
+    .modules-content-head {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .modules-empty {
+      text-align: center;
+      padding: 36px 22px;
+      border: 1px dashed rgba(28, 20, 15, 0.16);
+      border-radius: 22px;
+      background: rgba(255, 252, 247, 0.6);
+    }
+    .modules-empty strong {
+      display: block;
+      font-family: Fraunces, Georgia, serif;
+      font-weight: 500;
+      font-size: 1.25rem;
+      margin-bottom: 6px;
+    }
+    .modules-booking-panel {
+      margin-top: 18px;
+      padding: 18px 20px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: var(--paper);
+    }
+    .modules-booking-panel h3 {
+      margin: 0 0 0.35rem;
+      font-family: Fraunces, Georgia, serif;
+      font-weight: 500;
+      font-size: 1.15rem;
+    }
+    #modules-booking-hours {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin: 12px 0 0;
+      max-width: 28rem;
+    }
+    .booking-hour-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .booking-hour-row input[type="checkbox"] {
+      width: auto;
+      flex: none;
+      margin: 0;
+    }
+    .booking-hour-day {
+      flex: none;
+      width: 2.5rem;
+      font-size: 0.92rem;
+    }
+    .booking-hour-row input[type="text"] {
+      flex: 1 1 auto;
+      width: auto;
+      min-width: 0;
+      max-width: 14rem;
+      padding: 8px 12px;
+      border-radius: 999px;
+    }
+    .modules-booking-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 14px;
+      margin-top: 12px;
+    }
+    .modules-booking-actions > .hint {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0;
+      font-weight: 650;
+    }
+    .modules-booking-actions input[type="number"] {
+      width: 4rem;
+      padding: 8px 10px;
+      border-radius: 999px;
+    }
+    .modal.modules-item-modal {
+      width: min(540px, 100%);
+      max-height: min(90vh, 760px);
+      overflow-y: auto;
+    }
+    .mod-image-row {
+      display: grid;
+      grid-template-columns: 96px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+    }
+    .mod-image-preview {
+      width: 96px;
+      height: 96px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--cream);
+      overflow: hidden;
+      display: grid;
+      place-items: center;
+    }
+    .mod-image-preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .mod-image-url-fallback { margin-top: 8px; }
+    .mod-image-url-fallback summary { cursor: pointer; font-size: 0.86rem; }
+    .mod-image-url-fallback input { margin-top: 6px; width: 100%; }
+    #bill-credits-box {
+      border-radius: 22px;
+      background: var(--cream);
+      border-color: var(--line);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+      html { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div id="gate">
+      <div class="gate-intro">
+        <a class="logo" href="/"><img src="/brand/bitpype-mark.svg" alt="" width="36" height="36" /> BitPype</a>
+        <p class="kicker">Client portal</p>
+        <h1 class="brand">Your website,<br /><em>looked after.</em></h1>
+        <p class="tagline">Preview the site, change the words, colors, or photos, and send us anything bigger.</p>
+      </div>
+      <div class="auth-panel">
+        <div class="tabs" role="tablist">
+          <button type="button" id="tab-access" aria-selected="true">Get password</button>
+          <button type="button" id="tab-login" aria-selected="false">Log in</button>
+        </div>
+        <form id="form-access">
+          <div class="field">
+            <label for="access-email">Work email</label>
+            <input id="access-email" name="email" type="email" autocomplete="email" required placeholder="you@business.com" />
+          </div>
+          <div id="captcha-access" class="field"></div>
+          <button class="btn" type="submit" id="btn-access">Email me a password</button>
+          <p class="hint">We’ll look up your project by this email and send a one-time password.</p>
+          <p class="msg" id="msg-access"></p>
+        </form>
+        <form id="form-login" class="hidden">
+          <div class="field">
+            <label for="login-email">Email</label>
+            <input id="login-email" name="email" type="email" autocomplete="username" required />
+          </div>
+          <div class="field">
+            <label for="login-password">Password</label>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+          </div>
+          <div id="captcha-login" class="field"></div>
+          <button class="btn" type="submit" id="btn-login">Enter portal</button>
+          <p class="msg" id="msg-login"></p>
+        </form>
+      </div>
+    </div>
+
+    <div id="app" class="hidden">
+      <header class="topbar">
+        <a class="logo" href="/"><img src="/brand/bitpype-mark.svg" alt="" width="36" height="36" /> BitPype</a>
+        <div class="topbar-id">
+          <p class="who" id="biz-name">Your project</p>
+          <p class="meta" id="biz-meta"></p>
+        </div>
+        <button type="button" class="btn ghost" id="btn-logout">Log out</button>
+      </header>
+
+      <nav class="portal-nav" id="portal-nav" role="tablist" aria-label="Portal sections">
+        <button type="button" role="tab" id="nav-website" data-panel="website" aria-controls="sec-preview" aria-selected="true">Website</button>
+        <button type="button" role="tab" id="nav-changes" data-panel="changes" aria-controls="sec-changes" aria-selected="false">Changes</button>
+        <button type="button" role="tab" id="nav-forms" data-panel="forms" aria-controls="sec-forms" aria-selected="false">Forms</button>
+        <button type="button" role="tab" id="nav-modules" data-panel="modules" aria-controls="sec-modules" aria-selected="false">Modules</button>
+        <button type="button" role="tab" id="nav-social" data-panel="social" aria-controls="sec-social" aria-selected="false">Social</button>
+        <button type="button" role="tab" id="nav-billing" data-panel="billing" aria-controls="sec-billing" aria-selected="false">Billing</button>
+      </nav>
+
+      <section class="block portal-panel" id="sec-preview" role="tabpanel" aria-labelledby="nav-website" data-panel="website">
+        <div class="block-head">
+          <div>
+            <h2>Website preview</h2>
+            <p class="lede" id="preview-lede">Live look at the current site we built for you.</p>
+          </div>
+          <div class="preview-actions">
+            <button type="button" class="btn soft edit-affordance hidden" id="btn-structure" aria-pressed="false" title="Reorder menu and page sections">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 6h16" />
+                <path d="M4 12h16" />
+                <path d="M4 18h16" />
+              </svg>
+              <span id="btn-structure-label">Order</span>
+            </button>
+            <button type="button" class="btn soft edit-affordance hidden" id="btn-theme-colors" aria-pressed="false" title="Change site theme colors">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 22a5 5 0 0 0 5-5c0-2-1-3-3-5.5C12.5 9 12 7.5 12 6c0 1.5-.5 3-2 5.5C8 14 7 15 7 17a5 5 0 0 0 5 5Z" />
+                <path d="M8.5 14.5c1 .5 2 .5 3.5-.5" />
+              </svg>
+              <span id="btn-theme-colors-label">Theme</span>
+            </button>
+            <button type="button" class="btn soft edit-affordance hidden" id="btn-edit-mode" aria-pressed="false" title="Edit text on your site">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+              <span id="btn-edit-mode-label">Edit</span>
+            </button>
+            <button type="button" class="btn soft fs-toggle hidden" id="btn-enter-fullscreen" title="Edit in full screen">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+                <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+                <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
+                <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+              </svg>
+              <span>Full screen</span>
+            </button>
+            <button type="button" class="btn ghost fs-toggle hidden" id="btn-exit-fullscreen" title="Exit full screen (Esc)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M8 3v3a2 2 0 0 1-2 2H3" />
+                <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
+                <path d="M3 16h3a2 2 0 0 1 2 2v3" />
+                <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+              </svg>
+              <span>Close</span>
+            </button>
+            <button type="button" class="btn soft hidden" id="btn-publish-site" title="Publish your site to the live preview URL">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 19V5" />
+                <path d="m5 12 7-7 7 7" />
+                <path d="M5 19h14" />
+              </svg>
+              <span id="btn-publish-site-label">Publish</span>
+            </button>
+            <a class="btn soft hidden" id="btn-open-preview" href="#" target="_blank" rel="noopener">Open preview</a>
+          </div>
+        </div>
+        <div class="edit-bar" id="edit-bar" hidden>
+          <p class="edit-hint" id="edit-hint"><strong>Edit mode</strong> — click any text in the preview to change it.</p>
+          <div class="edit-actions">
+            <label class="edit-font">Site font
+              <select id="edit-font-body" class="font-select" aria-label="Sitewide font"></select>
+            </label>
+            <label class="edit-font">Headings
+              <select id="edit-font-heading" class="font-select" aria-label="Heading font"></select>
+            </label>
+            <label class="edit-font">This element
+              <select id="edit-font-element" class="font-select" aria-label="Font for the selected element" disabled></select>
+            </label>
+            <button type="button" class="btn ghost small" id="btn-edit-cancel">Cancel</button>
+            <button type="button" class="btn small" id="btn-edit-save">Save changes</button>
+          </div>
+        </div>
+        <div class="logo-bar" id="logo-bar" hidden>
+          <div class="logo-bar-main">
+            <p class="logo-bar-title"><strong>Logo</strong> — use your business name as text, or upload an image.</p>
+            <div class="logo-mode-row" role="group" aria-label="Logo type">
+              <label class="logo-mode"><input type="radio" name="logo-mode" id="logo-mode-text" value="text" checked /> Text logo</label>
+              <label class="logo-mode"><input type="radio" name="logo-mode" id="logo-mode-image" value="image" /> Image logo</label>
+            </div>
+            <div class="logo-preview-row">
+              <div class="logo-preview" id="logo-preview" aria-live="polite">
+                <span class="logo-preview-text" id="logo-preview-text">Business</span>
+                <img id="logo-preview-img" alt="Logo preview" hidden />
+              </div>
+              <div class="logo-actions">
+                <button type="button" class="btn soft small" id="btn-logo-upload">Upload logo</button>
+                <button type="button" class="btn ghost small" id="btn-logo-remove" hidden>Use text logo</button>
+              </div>
+            </div>
+            <p class="msg" id="msg-logo"></p>
+          </div>
+        </div>
+        <div class="structure-bar" id="structure-bar" hidden>
+          <p class="structure-bar-title"><strong>Menu &amp; sections</strong> — reorder pages (↑↓), nest submenus (→) or unnest (←), hide from menu (👁), add pages (+ Page), or insert modules (+ between sections).</p>
+          <div class="structure-cols">
+            <div class="structure-col">
+              <div class="structure-col-head">
+                <h3>Menu</h3>
+                <button type="button" class="btn soft small" id="btn-structure-add-page">+ Page</button>
+              </div>
+              <div class="structure-list" id="structure-menu"></div>
+            </div>
+            <div class="structure-col">
+              <h3>Sections</h3>
+              <div class="structure-page-tabs" id="structure-page-tabs"></div>
+              <div class="structure-list" id="structure-sections"></div>
+              <p class="hint" id="structure-sections-hint" hidden>This page is freeform HTML — section reorder applies to structured sites.</p>
+            </div>
+          </div>
+          <p class="msg" id="msg-structure"></p>
+        </div>
+        <div class="theme-bar" id="theme-bar" hidden>
+          <p class="theme-bar-title"><strong>Theme</strong> — brand colors and Google fonts. Changes update the preview live; Save keeps them on your site.</p>
+          <div class="theme-fonts">
+            <div class="theme-field">
+              <label for="theme-font-body">Site font</label>
+              <select id="theme-font-body" class="font-select" aria-label="Sitewide font"></select>
+            </div>
+            <div class="theme-field">
+              <label for="theme-font-heading">Heading font</label>
+              <select id="theme-font-heading" class="font-select" aria-label="Heading font"></select>
+            </div>
+          </div>
+          <div class="theme-grid" id="theme-grid">
+            <div class="theme-field">
+              <label for="theme-hex-primary">Primary</label>
+              <div class="theme-inputs">
+                <input type="color" id="theme-pick-primary" data-theme-key="primary" value="#1a56db" aria-label="Primary color picker" />
+                <input type="text" id="theme-hex-primary" data-theme-key="primary" value="#1a56db" maxlength="7" spellcheck="false" autocomplete="off" />
+              </div>
+            </div>
+            <div class="theme-field">
+              <label for="theme-hex-secondary">Secondary</label>
+              <div class="theme-inputs">
+                <input type="color" id="theme-pick-secondary" data-theme-key="secondary" value="#0e2a5c" aria-label="Secondary color picker" />
+                <input type="text" id="theme-hex-secondary" data-theme-key="secondary" value="#0e2a5c" maxlength="7" spellcheck="false" autocomplete="off" />
+              </div>
+            </div>
+            <div class="theme-field">
+              <label for="theme-hex-bg">Background</label>
+              <div class="theme-inputs">
+                <input type="color" id="theme-pick-bg" data-theme-key="bg" value="#ffffff" aria-label="Background color picker" />
+                <input type="text" id="theme-hex-bg" data-theme-key="bg" value="#ffffff" maxlength="7" spellcheck="false" autocomplete="off" />
+              </div>
+            </div>
+            <div class="theme-field">
+              <label for="theme-hex-text">Text</label>
+              <div class="theme-inputs">
+                <input type="color" id="theme-pick-text" data-theme-key="text" value="#1f2937" aria-label="Text color picker" />
+                <input type="text" id="theme-hex-text" data-theme-key="text" value="#1f2937" maxlength="7" spellcheck="false" autocomplete="off" />
+              </div>
+            </div>
+          </div>
+          <div class="theme-palette-wrap" id="theme-palette-wrap" hidden>
+            <p class="theme-palette-label">Colors on your site</p>
+            <p class="hint" style="margin:0 0 8px">Extra colors from your design (buttons, banners, accents). Change them here — they update live.</p>
+            <div class="theme-palette" id="theme-palette"></div>
+          </div>
+          <div class="theme-actions">
+            <button type="button" class="btn small" id="btn-theme-save">Save theme</button>
+            <button type="button" class="btn ghost small" id="btn-theme-reset">Reset</button>
+          </div>
+          <p class="msg" id="msg-theme"></p>
+        </div>
+        <p class="msg" id="msg-publish"></p>
+        <p class="msg" id="msg-edit"></p>
+        <div class="preview-frame" id="preview-box">
+          <div class="preview-empty" id="preview-empty">No preview is available yet.</div>
+        </div>
+      </section>
+
+      <div class="modal-backdrop" id="ai-image-modal" hidden>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ai-image-title">
+          <h2 id="ai-image-title">Generate image</h2>
+          <p class="lede" id="ai-image-credit-hint">Describe what you want — AI will replace this photo.</p>
+          <div class="field">
+            <label for="ai-image-prompt">Image description</label>
+            <textarea id="ai-image-prompt" maxlength="2000" rows="4" placeholder="e.g. Bright photo of a storefront with a wood sign and potted plants"></textarea>
+          </div>
+          <p class="msg" id="msg-ai-image"></p>
+          <div class="modal-actions">
+            <button type="button" class="btn ghost" id="btn-ai-image-cancel">Cancel</button>
+            <button type="button" class="btn" id="btn-ai-image-generate">Generate</button>
+          </div>
+        </div>
+      </div>
+
+      <section class="block portal-panel request-changes" id="sec-changes" role="tabpanel" aria-labelledby="nav-changes" data-panel="changes" hidden>
+        <h2>Request changes</h2>
+        <p class="lede">For layout, photos, or a larger redesign — tell us here. Use Edit on the Website tab for quick copy or image tweaks.</p>
+        <form class="panel" id="form-changes">
+          <div class="field">
+            <label for="change-kind">What do you need?</label>
+            <select id="change-kind">
+              <option value="improvements">Small changes / polish</option>
+              <option value="redesign">Bigger redesign</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="change-message">Details</label>
+            <textarea id="change-message" required placeholder="e.g. Update the phone number on Contact, soften the hero headline…"></textarea>
+          </div>
+          <button class="btn" type="submit" id="btn-changes">Submit request</button>
+          <p class="msg" id="msg-changes"></p>
+        </form>
+      </section>
+
+      <section class="block portal-panel" id="sec-forms" role="tabpanel" aria-labelledby="nav-forms" data-panel="forms" hidden>
+        <h2>Forms</h2>
+        <p class="lede">Build forms for your site, then review what people submit. Free plans email results; Standard+ keep them in Submissions.</p>
+        <div class="portal-pane-tabs" id="forms-pane-tabs" role="tablist" aria-label="Forms sections">
+          <button type="button" class="portal-pane-tab is-active" role="tab" data-forms-pane="setup" aria-selected="true">Forms</button>
+          <button type="button" class="portal-pane-tab" role="tab" data-forms-pane="results" aria-selected="false">Submissions</button>
+        </div>
+        <div id="forms-pane-setup">
+          <div class="panel" id="forms-list-panel">
+            <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+              <strong>Your forms</strong>
+              <button type="button" class="btn" id="btn-form-new">New form</button>
+            </div>
+            <div id="forms-list"></div>
+            <p class="msg" id="msg-forms-list"></p>
+          </div>
+          <div class="panel" id="forms-editor-panel" hidden>
+            <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+              <button type="button" class="btn ghost small" id="btn-form-back">← All forms</button>
+              <button type="button" class="btn ghost small" id="btn-form-delete" style="color:#9b2c2c">Delete</button>
+            </div>
+            <div class="field"><label for="form-name">Form name</label><input id="form-name" type="text" placeholder="Contact form" /></div>
+            <div class="field"><label for="form-title">Title</label><input id="form-title" type="text" /></div>
+            <div class="field"><label for="form-intro">Intro</label><textarea id="form-intro" rows="2"></textarea></div>
+            <div class="field"><label for="form-submit-label">Submit button</label><input id="form-submit-label" type="text" /></div>
+            <div class="field"><label for="form-notify">Notify email</label><input id="form-notify" type="email" /></div>
+            <div class="field"><label for="form-success">Success message</label><input id="form-success" type="text" /></div>
+            <div class="row" style="align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0 8px">
+              <label class="hint" style="display:flex;align-items:center;gap:8px;margin:0;font-weight:650;color:inherit">
+                <input type="checkbox" id="form-embed-on-page" checked />
+                Add to
+              </label>
+              <select id="form-target-page" style="min-width:140px;width:auto">
+                <option value="contact">contact</option>
+              </select>
+              <span class="hint">page on your site when published</span>
+            </div>
+            <h3 style="margin:18px 0 8px;font-size:1.05rem">Fields</h3>
+            <div id="form-fields-editor"></div>
+            <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+              <button type="button" class="btn soft small" id="btn-form-add-field">Add field</button>
+              <button type="button" class="btn" id="btn-form-save">Save form</button>
+              <button type="button" class="btn soft" id="btn-form-publish">Publish</button>
+            </div>
+            <p class="hint" id="form-embed-hint" style="margin-top:12px"></p>
+            <textarea id="form-embed-code" rows="3" readonly hidden style="width:100%;margin-top:8px;font-family:ui-monospace,monospace;font-size:12px"></textarea>
+            <p class="msg" id="msg-forms"></p>
+          </div>
+        </div>
+        <div id="forms-pane-results" hidden>
+          <div class="panel">
+            <h3 style="margin:0 0 8px;font-size:1.05rem">Submissions</h3>
+            <p class="hint" id="form-inbox-notice"></p>
+            <div id="form-submissions"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="block portal-panel" id="sec-modules" role="tabpanel" aria-labelledby="nav-modules" data-panel="modules" hidden>
+        <h2>Site modules</h2>
+        <p class="lede">Manage content for each module on the left, then place it on a page. Included with Standard and Premium.</p>
+        <div class="panel" id="modules-upgrade" hidden>
+          <p style="margin:0 0 12px">Upgrade to <strong>Standard</strong> or <strong>Premium</strong> to unlock site modules.</p>
+          <button type="button" class="btn" id="btn-modules-upgrade">View plans</button>
+        </div>
+        <div id="modules-app" hidden>
+          <div class="modules-admin">
+            <aside class="modules-admin-side">
+              <p class="modules-admin-side-hint">Choose a module to edit its content and site placement.</p>
+              <nav id="modules-type-tabs" class="modules-side-nav" role="tablist" aria-label="Module types"></nav>
+            </aside>
+            <div class="modules-admin-main">
+              <div class="modules-embed-card" id="modules-embed-bar">
+                <div class="modules-embed-head">
+                  <div>
+                    <h3 class="modules-embed-title" id="modules-current-label">Blog</h3>
+                    <p class="hint" id="modules-embed-status" style="margin:6px 0 0">Not on your site yet.</p>
+                  </div>
+                  <div class="modules-embed-actions">
+                    <label class="hint" style="display:flex;align-items:center;gap:6px;margin:0">
+                      Show on page
+                      <select id="modules-target-page" style="min-width:120px;width:auto"></select>
+                    </label>
+                    <button type="button" class="btn" id="btn-modules-attach">Add to site</button>
+                    <button type="button" class="btn ghost" id="btn-modules-detach">Remove</button>
+                  </div>
+                </div>
+                <div id="modules-embed-url"></div>
+              </div>
+              <div class="portal-pane-tabs" id="modules-pane-tabs" role="tablist" aria-label="Module sections" hidden>
+                <button type="button" class="portal-pane-tab is-active" role="tab" data-modules-pane="content" aria-selected="true">Services</button>
+                <button type="button" class="portal-pane-tab" role="tab" data-modules-pane="results" aria-selected="false">Hours &amp; bookings</button>
+              </div>
+              <div class="panel" id="modules-pane-content">
+                <div class="modules-content-head">
+                  <div>
+                    <strong id="modules-items-heading">Your content</strong>
+                    <p class="hint" id="modules-items-sub" style="margin:4px 0 0">Posts and pages for this module.</p>
+                  </div>
+                  <button type="button" class="btn" id="btn-modules-new">New item</button>
+                </div>
+                <div id="modules-items"></div>
+                <p class="msg" id="msg-modules"></p>
+              </div>
+              <div id="modules-pane-results" hidden>
+                <div id="modules-booking-panel" class="modules-booking-panel" hidden></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="modal-backdrop" id="structure-module-modal" hidden>
+        <div class="modal structure-module-modal" role="dialog" aria-modal="true" aria-labelledby="structure-module-modal-title">
+          <h2 id="structure-module-modal-title">Insert module</h2>
+          <p class="lede">Choose a site module to add on this page. It loads in-page (not an iframe).</p>
+          <div class="structure-module-list" id="structure-module-list"></div>
+          <p class="msg" id="msg-structure-module"></p>
+          <div class="modal-actions">
+            <button type="button" class="btn ghost" id="btn-structure-module-cancel">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-backdrop" id="structure-page-modal" hidden>
+        <div class="modal structure-page-modal" role="dialog" aria-modal="true" aria-labelledby="structure-page-modal-title">
+          <h2 id="structure-page-modal-title">New page</h2>
+          <p class="lede">Creates a page and adds it to your site menu.</p>
+          <label for="structure-page-title">Page title</label>
+          <input type="text" id="structure-page-title" maxlength="120" placeholder="e.g. Pricing" autocomplete="off" />
+          <p class="msg" id="msg-structure-page"></p>
+          <div class="modal-actions">
+            <button type="button" class="btn ghost" id="btn-structure-page-cancel">Cancel</button>
+            <button type="button" class="btn" id="btn-structure-page-save">Create page</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-backdrop" id="modules-item-modal" hidden>
+        <div class="modal modules-item-modal" role="dialog" aria-modal="true" aria-labelledby="modules-modal-title">
+          <h2 id="modules-modal-title">New item</h2>
+          <p class="lede" id="modules-modal-lede"></p>
+          <div id="modules-fields"></div>
+          <p class="msg" id="msg-modules-modal"></p>
+          <div class="modal-actions">
+            <button type="button" class="btn ghost" id="btn-modules-cancel">Cancel</button>
+            <button type="button" class="btn ghost" id="btn-modules-delete" style="color:#9b2c2c">Delete</button>
+            <button type="button" class="btn" id="btn-modules-save">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <section class="block portal-panel" id="sec-social" role="tabpanel" aria-labelledby="nav-social" data-panel="social" hidden>
+        <h2>Social calendar</h2>
+        <p class="lede" id="cal-lede">This month’s scheduled posts.</p>
+        <div class="panel" style="margin-bottom:14px">
+          <strong style="display:block;margin-bottom:8px">Facebook / Instagram</strong>
+          <p class="hint" id="social-accounts-hint">Connect a Page to schedule posts automatically.</p>
+          <div id="social-accounts-list"></div>
+          <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+            <button type="button" class="btn" id="btn-meta-connect">Connect Facebook / Instagram</button>
+          </div>
+          <p class="msg" id="msg-meta"></p>
+        </div>
+        <div class="panel">
+          <div class="row" style="margin-bottom:12px;justify-content:space-between">
+            <strong id="cal-label"></strong>
+            <div class="row">
+              <button type="button" class="btn soft" id="gen-week">Generate a week</button>
+              <button type="button" class="btn" id="gen-month">Generate a month</button>
+            </div>
+          </div>
+          <p class="price-hint" id="image-price-hint" hidden></p>
+          <div class="cal-scroll"><div class="cal-grid" id="cal-grid"></div></div>
+          <div class="post-list" id="post-list"></div>
+          <div class="pager" id="post-pager" hidden>
+            <span class="info" id="post-page-info"></span>
+            <div class="row">
+              <button type="button" class="btn ghost small" id="post-prev">Previous</button>
+              <button type="button" class="btn ghost small" id="post-next">Next</button>
+            </div>
+          </div>
+          <p class="msg" id="msg-social"></p>
+        </div>
+      </section>
+
+      <section class="block portal-panel" id="sec-billing" role="tabpanel" aria-labelledby="nav-billing" data-panel="billing" hidden>
+        <h2>Billing</h2>
+        <p class="lede">Choose Free, Standard, or Premium — Free includes website + edits; Premium includes social images.</p>
+        <div class="panel">
+          <div id="bill-checkout-banner" class="bill-alert" hidden></div>
+          <p style="margin:0 0 8px"><span class="status-pill" id="bill-status">…</span>
+            <span class="hint" id="bill-plan-name" style="margin-left:8px"></span></p>
+          <p class="hint" id="bill-renewal" style="margin:0 0 12px"></p>
+          <p class="hint" id="bill-notice" style="margin:0 0 12px"></p>
+          <div class="row" id="bill-plan-actions" style="flex-wrap:wrap;gap:8px">
+            <button type="button" class="btn" id="btn-manage-billing" hidden>Manage subscription</button>
+          </div>
+          <div class="panel" id="bill-credits-box" style="margin:16px 0">
+            <p style="margin:0 0 6px;font-weight:650">Social credits</p>
+            <p class="hint" id="bill-credits-balance" style="margin:0 0 10px">Balance: …</p>
+            <p class="hint" id="bill-credits-rates" style="margin:0 0 12px"></p>
+            <button type="button" class="btn soft" id="btn-buy-credits" hidden>Buy credits</button>
+          </div>
+          <div class="plan-grid" id="bill-plan-grid" aria-label="Subscription plans"></div>
+          <p class="plan-note" id="bill-plan-foot">Switch plans here anytime. Standard ↔ Premium updates your Stripe subscription with proration. Downgrade to Free cancels at period end. Payment method and receipts: Manage subscription.</p>
+          <div class="panel" id="mcp-agent-box" style="margin-top:16px" hidden>
+            <p style="margin:0 0 6px;font-weight:650">Muse / AI agent (MCP)</p>
+            <p class="hint" style="margin:0 0 10px">Standard and Premium can mint a lead-scoped token to manage this website (edits, pages, modules, publish, billing links). Social scheduling tools are Premium-only. Form inbox stays here in the portal — not via MCP.</p>
+            <button type="button" class="btn soft small" id="btn-mcp-token">Create MCP token</button>
+            <p class="msg" id="msg-mcp"></p>
+          </div>
+          <p class="msg" id="msg-billing"></p>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="/js/fonts.js?v=fonts1"></script>
+  <script src="/js/captcha.js"></script>
+  <script src="/js/portal.js?v=modules-pane-tabs-hide"></script>
+</body>
+</html>

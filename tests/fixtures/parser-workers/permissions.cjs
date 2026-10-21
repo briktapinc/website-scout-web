@@ -1,0 +1,1 @@
+process.once('message',({opts})=>{let blocked=false;try{require('fs').readFileSync(opts.privatePath)}catch{blocked=true}process.send({text:JSON.stringify({blocked,secret:!!process.env.SESSION_SECRET}),supported:true,extractor:'fixture'})});
