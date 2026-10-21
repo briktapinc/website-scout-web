@@ -2,10 +2,12 @@
 // Package selection and hashes come only from authenticated, dated APT indexes.
 // Alternate endpoints may supply identical bytes, never newer package versions.
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
-const {execFileSync}=require('node:child_process');
-const {Readable}=require('node:stream'),{pipeline}=require('node:stream/promises');
+const {execFileSync,execFile}=require('node:child_process');
+const downloadFile=require('node:util').promisify(execFile);
 const packages=process.argv.slice(2);
 async function main(){
+ const deadline=setTimeout(()=>{console.error('Pinned package download deadline exceeded');process.exit(1)},10*60*1000);
+ deadline.unref();
  if(!packages.length||packages.some(x=>!/^[a-z0-9][a-z0-9+.-]*$/.test(x)))throw Error('Explicit package names required');
  const metadata=new Map();
  for(const paragraph of execFileSync('apt-cache',['dumpavail'],{encoding:'utf8',maxBuffer:150*1024*1024}).split(/\n\n/)){
@@ -40,9 +42,8 @@ async function main(){
   for(let attempt=0;attempt<3;attempt++){
    for(const url of item.urls){
     try{
-     const response=await fetch(url,{signal:AbortSignal.timeout(45000)});
-     if(!response.ok){if(response.body)await response.body.cancel();continue;}
-     await pipeline(Readable.fromWeb(response.body),fs.createWriteStream(temporary,{mode:0o644}));
+     // Use APT's own TLS/proxy/retry transport, including its checksum check.
+     await downloadFile('/usr/lib/apt/apt-helper',['-o','Acquire::Retries=1','-o','Acquire::https::Timeout=15','download-file',url,temporary,'SHA256:'+item.sha],{timeout:90000,maxBuffer:1024*1024});
      if(!await valid(temporary,item))throw Error('Package checksum mismatch');
      fs.renameSync(temporary,target);return;
     }catch{fs.rmSync(temporary,{force:true});}
@@ -51,8 +52,9 @@ async function main(){
   }
   throw Error('Cannot retrieve authenticated pinned package: '+item.name);
  }
- let next=0;
- await Promise.all(Array.from({length:4},async()=>{while(next<downloads.length)await download(downloads[next++]);}));
+ let next=0,completed=0;
+ await Promise.all(Array.from({length:4},async()=>{while(next<downloads.length){await download(downloads[next++]);completed++;if(completed%20===0)console.log('Verified pinned packages: '+completed+'/'+downloads.length);}}));
+ clearTimeout(deadline);
  console.log(JSON.stringify({authenticatedPinnedPackages:downloads.length,sha256Verified:true}));
  execFileSync('apt-get',['-o','Acquire::Retries=3','install','--yes','--no-install-recommends',...packages],{stdio:'inherit'});
 }
